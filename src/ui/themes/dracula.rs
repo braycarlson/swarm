@@ -5,6 +5,7 @@ pub fn dracula_visuals() -> egui::Visuals {
 
     let background = egui::Color32::from_rgb(40, 42, 54);
     let current_line = egui::Color32::from_rgb(68, 71, 90);
+    let current_line_dark = egui::Color32::from_rgb(50, 52, 66);
     let selection = egui::Color32::from_rgb(68, 71, 90);
     let foreground = egui::Color32::from_rgb(248, 248, 242);
     let comment = egui::Color32::from_rgb(98, 114, 164);
@@ -53,10 +54,20 @@ pub fn dracula_visuals() -> egui::Visuals {
 
     visuals.window_fill = background;
     visuals.window_stroke = egui::Stroke::new(1.0, current_line);
-    visuals.window_shadow = egui::epaint::Shadow::NONE;
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(80),
+    };
 
-    visuals.panel_fill = current_line;
-    visuals.popup_shadow = egui::epaint::Shadow::NONE;
+    visuals.panel_fill = current_line_dark;
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 8,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(60),
+    };
 
     visuals.resize_corner_size = 12.0;
     visuals.text_cursor.stroke = egui::Stroke::new(2.0, pink);

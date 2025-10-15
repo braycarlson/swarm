@@ -41,6 +41,8 @@ fn handle_copy_completed(model: &mut Model, ui: &mut UiState, output: String) ->
     model.tree.output = output;
     ui.copy_in_progress = false;
 
+    ui.toast.success("Copied to clipboard");
+
     Cmd::None
 }
 

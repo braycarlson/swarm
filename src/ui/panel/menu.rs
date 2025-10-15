@@ -34,11 +34,6 @@ pub fn render(
                         ui.close();
                     }
 
-                    if ui.button("Save Sessions").clicked() {
-                        sender.send(Msg::App(App::Tick)).ok();
-                        ui.close();
-                    }
-
                     ui.separator();
 
                     if ui.button("Exit").clicked() {

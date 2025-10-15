@@ -11,6 +11,7 @@ pub fn handle(model: &mut Model, ui: &mut UiState, msg: App) -> Cmd {
         App::Initialized => handle_app_initialized(model),
         App::FileDialogOpened => Cmd::None,
         App::PathSelected(path) => handle_path_selected(model, ui, path),
+        App::PathsReceivedFromIpc(paths) => handle_paths_from_ipc(model, ui, paths),
         App::AboutOpened => handle_about_opened(ui),
         App::AboutClosed => handle_about_closed(ui),
         App::Tick => Cmd::None,
@@ -67,17 +68,49 @@ fn handle_path_selected(model: &mut Model, ui: &mut UiState, path: PathBuf) -> C
     cmd_builder = cmd_builder.add(Cmd::SwitchIndexSession(session_id));
 
     ui.file_dialog_pending = true;
+
     model.tree.load_status = LoadStatus::Loading {
         message: format!("Loading {}", path.display()),
         progress: (0, 0),
     };
 
-    cmd_builder
-        .add(Cmd::LoadSession {
+    cmd_builder = cmd_builder.add(Cmd::LoadSession {
+        path,
+        options: Arc::clone(&model.options),
+    });
+
+    cmd_builder.build()
+}
+
+fn handle_paths_from_ipc(model: &mut Model, _ui: &mut UiState, paths: Vec<PathBuf>) -> Cmd {
+    if paths.is_empty() {
+        return Cmd::None;
+    }
+
+    sync_to_active_session(model);
+
+    let session_name = format!("Session");
+    let session_id = model.sessions.create_session(session_name);
+
+    model.tree = Default::default();
+    model.search = Default::default();
+
+    let mut cmd_builder = CmdBuilder::new()
+        .add(Cmd::SwitchIndexSession(session_id));
+
+    model.tree.load_status = LoadStatus::Loading {
+        message: format!("Loading {} paths", paths.len()),
+        progress: (0, paths.len()),
+    };
+
+    for path in paths {
+        cmd_builder = cmd_builder.add(Cmd::LoadSession {
             path,
             options: Arc::clone(&model.options),
-        })
-        .build()
+        });
+    }
+
+    cmd_builder.build()
 }
 
 fn handle_about_opened(ui: &mut UiState) -> Cmd {

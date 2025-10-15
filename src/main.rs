@@ -1,15 +1,39 @@
 #![windows_subsystem = "windows"]
 
+use single_instance::SingleInstance;
 use std::env;
 use std::path::Path;
-
 use swarm::{SwarmApp, APP_NAME};
 
 fn main() -> Result<(), eframe::Error> {
     let args: Vec<String> = env::args().collect();
     let paths = parse_arguments(&args);
 
-    let app = SwarmApp::new(paths);
+    let options = swarm::model::Options::load().unwrap_or_default();
+
+    let instance_guard = if options.single_instance {
+        let guard = SingleInstance::new("swarm-single-instance")
+            .expect("Failed to create single instance guard");
+
+        if !guard.is_single() {
+            if !paths.is_empty() {
+                use std::net::TcpStream;
+                use std::io::Write;
+
+                if let Ok(mut stream) = TcpStream::connect("127.0.0.1:44287") {
+                    let content = paths.join("\n");
+                    let _ = stream.write_all(content.as_bytes());
+                }
+            }
+            return Ok(());
+        }
+
+        Some(guard)
+    } else {
+        None
+    };
+
+    let app = SwarmApp::new(paths, instance_guard);
     let options = create_window_options();
 
     eframe::run_native(

@@ -7,6 +7,7 @@ pub mod state;
 use std::sync::mpsc;
 use std::sync::Arc;
 use eframe::egui;
+use single_instance::SingleInstance;
 
 use crate::app::state::SessionData;
 use crate::ui::view::View;
@@ -23,16 +24,47 @@ pub struct SwarmApp {
     msg_receiver: mpsc::Receiver<Msg>,
     msg_sender: mpsc::Sender<Msg>,
     initialized: bool,
+    _instance_guard: Option<SingleInstance>,
+    _ipc_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl SwarmApp {
-    pub fn new(paths: Vec<String>) -> Self {
+    pub fn new(paths: Vec<String>, instance_guard: Option<SingleInstance>) -> Self {
         let (msg_sender, msg_receiver) = mpsc::channel();
 
         let model = Model::new(paths);
         let theme = model.options.theme;
         let ui = UiState::new(theme);
         let runtime = Runtime::new(msg_sender.clone());
+
+        let ipc_thread = if instance_guard.is_some() {
+            let ipc_sender = msg_sender.clone();
+            Some(std::thread::spawn(move || {
+                use std::net::TcpListener;
+                use std::io::Read;
+
+                if let Ok(listener) = TcpListener::bind("127.0.0.1:44287") {
+                    for stream in listener.incoming().flatten() {
+                        let mut stream = stream;
+                        let mut buffer = String::new();
+                        if stream.read_to_string(&mut buffer).is_ok() {
+                            let paths: Vec<std::path::PathBuf> = buffer
+                                .lines()
+                                .map(std::path::PathBuf::from)
+                                .collect();
+
+                            if !paths.is_empty() {
+                                let _ = ipc_sender.send(Msg::App(
+                                    App::PathsReceivedFromIpc(paths)
+                                ));
+                            }
+                        }
+                    }
+                }
+            }))
+        } else {
+            None
+        };
 
         Self {
             model,
@@ -41,6 +73,8 @@ impl SwarmApp {
             msg_receiver,
             msg_sender,
             initialized: false,
+            _instance_guard: instance_guard,
+            _ipc_thread: ipc_thread,
         }
     }
 
@@ -105,6 +139,7 @@ impl eframe::App for SwarmApp {
                 }
 
                 let cmd = builder.build();
+
                 if !matches!(cmd, Cmd::None) {
                     self.runtime.execute(cmd);
                 }
@@ -125,6 +160,8 @@ impl eframe::App for SwarmApp {
         self.process_messages();
 
         View::render(ctx, &self.model, &self.ui, &self.msg_sender);
+
+        self.ui.toast.show(ctx);
 
         if matches!(
             self.model.index.status,

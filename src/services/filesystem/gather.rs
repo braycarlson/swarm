@@ -34,7 +34,7 @@ impl GatherService {
             }
 
             if clean_path.is_file() {
-                self.collect_file(&clean_path, &mut files)?;
+                self.collect_file(&clean_path, &mut files);
             } else if clean_path.is_dir() {
                 self.collect_directory(&clean_path, &mut files, &include_set, &exclude_set, options)?;
             }
@@ -43,10 +43,10 @@ impl GatherService {
         self.format_output(&files, options.output_format)
     }
 
-    fn collect_file(&self, path: &Path, files: &mut Vec<(String, String)>) -> SwarmResult<()> {
-        let content = fs::read_to_string(path)?;
-        files.push((path.display().to_string(), content));
-        Ok(())
+    fn collect_file(&self, path: &Path, files: &mut Vec<(String, String)>) {
+        if let Ok(content) = fs::read_to_string(path) {
+            files.push((path.display().to_string(), content));
+        }
     }
 
     fn collect_directory(
@@ -67,7 +67,7 @@ impl GatherService {
 
             if entry.file_type().map_or(false, |file_type| file_type.is_file()) {
                 if self.should_include_file(entry.path(), include_set, exclude_set, options) {
-                    self.collect_file(entry.path(), files)?;
+                    self.collect_file(entry.path(), files);
                 }
             }
         }

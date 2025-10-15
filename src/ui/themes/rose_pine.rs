@@ -122,10 +122,20 @@ fn apply_common_settings(
 
     visuals.window_fill = base;
     visuals.window_stroke = egui::Stroke::new(1.0, overlay);
-    visuals.window_shadow = egui::epaint::Shadow::NONE;
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(80),
+    };
 
     visuals.panel_fill = surface;
-    visuals.popup_shadow = egui::epaint::Shadow::NONE;
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 8,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(60),
+    };
 
     visuals.resize_corner_size = 12.0;
     visuals.text_cursor.stroke = egui::Stroke::new(2.0, iris);

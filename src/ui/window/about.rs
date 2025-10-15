@@ -22,19 +22,19 @@ pub fn render(ctx: &egui::Context, sender: &Sender<Msg>) {
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         ui.vertical_centered(|ui| {
-                            ui.heading(APP_NAME);
-                            ui.add_space(5.0);
-                            ui.label(&format!("Version {}", APP_VERSION));
+                            ui.heading(&format!("{} [v{}]", APP_NAME, APP_VERSION));
                         });
 
-                        ui.add_space(10.0);
+                        ui.add_space(60.0);
+
                         ui.add(egui::Label::new(
                             "swarm is a developer tool for generating project context. \
-                             It lets you browse and select file(s) from a directory tree, then copy \
+                             It allows you browse and select file(s) from a directory tree, then copy \
                              the structure or content in multiple formats, such as: plain text, Markdown, JSON, or XML."
                         ).wrap());
 
-                        ui.add_space(10.0);
+                        ui.add_space(15.0);
+
                         ui.hyperlink_to("Homepage", "https://github.com/braycarlson/swarm");
                         ui.hyperlink_to("Editor Extension", "https://github.com/braycarlson/swarm_extension/");
                         ui.label("License: MIT");

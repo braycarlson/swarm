@@ -88,6 +88,7 @@ pub enum Options_ {
     UseIconChanged(bool),
     AutoIndexChanged(bool),
     DeleteSessionsChanged(bool),
+    SingleInstanceChanged(bool),
     OutputFormatChanged(crate::model::output::OutputFormat),
 }
 
@@ -106,6 +107,7 @@ pub enum App {
     Initialized,
     FileDialogOpened,
     PathSelected(PathBuf),
+    PathsReceivedFromIpc(Vec<PathBuf>),
     AboutOpened,
     AboutClosed,
     Tick,

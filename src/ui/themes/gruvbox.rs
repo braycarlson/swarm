@@ -3,16 +3,17 @@ use eframe::egui;
 pub fn gruvbox_dark_visuals() -> egui::Visuals {
     let mut visuals = egui::Visuals::dark();
 
-    let bg0    = egui::Color32::from_rgb(40, 40, 40);
-    let bg1    = egui::Color32::from_rgb(50, 48, 47);
-    let bg2    = egui::Color32::from_rgb(60, 56, 54);
-    let fg     = egui::Color32::from_rgb(235, 219, 178);
-    let dim    = egui::Color32::from_rgb(189, 174, 147);
+    let bg0 = egui::Color32::from_rgb(40, 40, 40);
+    let bg1 = egui::Color32::from_rgb(50, 48, 47);
+    let bg1_dark = egui::Color32::from_rgb(35, 34, 33);
+    let bg2 = egui::Color32::from_rgb(60, 56, 54);
+    let fg = egui::Color32::from_rgb(235, 219, 178);
+    let dim = egui::Color32::from_rgb(189, 174, 147);
     let yellow = egui::Color32::from_rgb(250, 189, 47);
-    let blue   = egui::Color32::from_rgb(131, 165, 152);
-    let _aqua   = egui::Color32::from_rgb(142, 192, 124);
+    let blue = egui::Color32::from_rgb(131, 165, 152);
+    let _aqua = egui::Color32::from_rgb(142, 192, 124);
     let purple = egui::Color32::from_rgb(211, 134, 155);
-    let red    = egui::Color32::from_rgb(204, 36, 29);
+    let red = egui::Color32::from_rgb(204, 36, 29);
     let orange = egui::Color32::from_rgb(214, 93, 14);
 
     visuals.widgets.noninteractive.bg_fill   = bg1;
@@ -52,10 +53,20 @@ pub fn gruvbox_dark_visuals() -> egui::Visuals {
 
     visuals.window_fill   = bg0;
     visuals.window_stroke = egui::Stroke::new(1.0, bg1);
-    visuals.window_shadow = egui::epaint::Shadow::NONE;
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(80),
+    };
 
-    visuals.panel_fill    = bg1;
-    visuals.popup_shadow  = egui::epaint::Shadow::NONE;
+    visuals.panel_fill    = bg1_dark;
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 8,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(60),
+    };
 
     visuals.resize_corner_size  = 12.0;
     visuals.text_cursor.stroke  = egui::Stroke::new(2.0, blue);

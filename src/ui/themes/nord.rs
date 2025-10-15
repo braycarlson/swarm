@@ -3,6 +3,7 @@ use eframe::egui;
 pub fn nord_visuals() -> egui::Visuals {
     let mut visuals = egui::Visuals::dark();
 
+    let polar_night_dark = egui::Color32::from_rgb(36, 42, 54);
     let polar_night_0 = egui::Color32::from_rgb(46, 52, 64);
     let polar_night_1 = egui::Color32::from_rgb(59, 66, 82);
     let polar_night_2 = egui::Color32::from_rgb(67, 76, 94);
@@ -49,18 +50,28 @@ pub fn nord_visuals() -> egui::Visuals {
     visuals.selection.stroke = egui::Stroke::new(1.0, frost_3);
 
     visuals.hyperlink_color = frost_1;
-    visuals.faint_bg_color = polar_night_0;
-    visuals.extreme_bg_color = polar_night_0;
+    visuals.faint_bg_color = polar_night_dark;
+    visuals.extreme_bg_color = polar_night_dark;
     visuals.code_bg_color = polar_night_1;
     visuals.warn_fg_color = aurora_2;
     visuals.error_fg_color = aurora_0;
 
-    visuals.window_fill = polar_night_0;
+    visuals.window_fill = polar_night_dark;
     visuals.window_stroke = egui::Stroke::new(1.0, polar_night_1);
-    visuals.window_shadow = egui::epaint::Shadow::NONE;
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(80),
+    };
 
     visuals.panel_fill = polar_night_1;
-    visuals.popup_shadow = egui::epaint::Shadow::NONE;
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 8,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(60),
+    };
 
     visuals.resize_corner_size = 12.0;
     visuals.text_cursor.stroke = egui::Stroke::new(2.0, frost_0);

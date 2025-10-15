@@ -40,11 +40,17 @@ fn handle_tree_generation_started(ui: &mut UiState) -> Cmd {
 fn handle_tree_generated(model: &mut Model, ui: &mut UiState, output: String) -> Cmd {
     model.tree.output = output;
     ui.tree_gen_in_progress = false;
+
+    ui.toast.success("Copied to clipboard");
+
     Cmd::None
 }
 
 fn handle_tree_generation_failed(ui: &mut UiState, error: String) -> Cmd {
     ui.tree_gen_in_progress = false;
     eprintln!("Tree generation failed: {}", error);
+
+    ui.toast.error(format!("Tree generation failed: {}", error));
+
     Cmd::None
 }

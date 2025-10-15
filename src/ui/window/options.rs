@@ -136,16 +136,22 @@ fn render_behavior_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg
     ui.label(egui::RichText::new("Behavior").strong().color(ui.visuals().weak_text_color()));
     ui.add_space(5.0);
 
-    let mut auto_index = model.options.auto_index_on_startup;
-
-    if ui.checkbox(&mut auto_index, "Auto-index on startup").clicked() {
-        sender.send(Msg::Options(Options_::AutoIndexChanged(auto_index))).ok();
-    }
-
     let mut delete_sessions = model.options.delete_sessions_on_exit;
 
     if ui.checkbox(&mut delete_sessions, "Delete session(s) upon exiting").clicked() {
         sender.send(Msg::Options(Options_::DeleteSessionsChanged(delete_sessions))).ok();
+    }
+
+    let mut single_instance = model.options.single_instance;
+
+    if ui.checkbox(&mut single_instance, "Use a single instance (requires restart)").clicked() {
+        sender.send(Msg::Options(Options_::SingleInstanceChanged(single_instance))).ok();
+    }
+
+    let mut auto_index = model.options.auto_index_on_startup;
+
+    if ui.checkbox(&mut auto_index, "Auto-index on startup").clicked() {
+        sender.send(Msg::Options(Options_::AutoIndexChanged(auto_index))).ok();
     }
 }
 

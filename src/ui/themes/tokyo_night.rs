@@ -6,6 +6,7 @@ pub fn tokyo_night_visuals() -> egui::Visuals {
     let bg = egui::Color32::from_rgb(26, 27, 38);
     let bg_dark = egui::Color32::from_rgb(22, 22, 30);
     let bg_highlight = egui::Color32::from_rgb(41, 46, 66);
+    let bg_highlight_dark = egui::Color32::from_rgb(32, 36, 52);
     let terminal_black = egui::Color32::from_rgb(65, 72, 104);
     let fg = egui::Color32::from_rgb(192, 202, 245);
     let _fg_dark = egui::Color32::from_rgb(169, 177, 214);
@@ -55,10 +56,20 @@ pub fn tokyo_night_visuals() -> egui::Visuals {
 
     visuals.window_fill = bg;
     visuals.window_stroke = egui::Stroke::new(1.0, bg_highlight);
-    visuals.window_shadow = egui::epaint::Shadow::NONE;
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(80),
+    };
 
-    visuals.panel_fill = bg_highlight;
-    visuals.popup_shadow = egui::epaint::Shadow::NONE;
+    visuals.panel_fill = bg_highlight_dark;
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 8,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(60),
+    };
 
     visuals.resize_corner_size = 12.0;
     visuals.text_cursor.stroke = egui::Stroke::new(2.0, blue);
@@ -81,6 +92,7 @@ pub fn tokyo_night_storm_visuals() -> egui::Visuals {
     let bg = egui::Color32::from_rgb(36, 40, 59);
     let bg_dark = egui::Color32::from_rgb(31, 35, 53);
     let bg_highlight = egui::Color32::from_rgb(56, 62, 90);
+    let bg_highlight_dark = egui::Color32::from_rgb(44, 49, 70);
     let terminal_black = egui::Color32::from_rgb(68, 75, 106);
     let fg = egui::Color32::from_rgb(169, 177, 214);
     let comment = egui::Color32::from_rgb(86, 95, 137);
@@ -127,10 +139,20 @@ pub fn tokyo_night_storm_visuals() -> egui::Visuals {
 
     visuals.window_fill = bg;
     visuals.window_stroke = egui::Stroke::new(1.0, bg_highlight);
-    visuals.window_shadow = egui::epaint::Shadow::NONE;
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(80),
+    };
 
-    visuals.panel_fill = bg_highlight;
-    visuals.popup_shadow = egui::epaint::Shadow::NONE;
+    visuals.panel_fill = bg_highlight_dark;
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 8,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(60),
+    };
 
     visuals.resize_corner_size = 12.0;
     visuals.text_cursor.stroke = egui::Stroke::new(2.0, blue);
@@ -153,6 +175,7 @@ pub fn tokyo_night_day_visuals() -> egui::Visuals {
     let bg = egui::Color32::from_rgb(230, 237, 243);
     let bg_dark = egui::Color32::from_rgb(213, 223, 232);
     let bg_highlight = egui::Color32::from_rgb(197, 210, 224);
+    let bg_highlight_darker = egui::Color32::from_rgb(185, 200, 216);
     let terminal_black = egui::Color32::from_rgb(169, 184, 203);
     let fg = egui::Color32::from_rgb(52, 59, 88);
     let comment = egui::Color32::from_rgb(148, 163, 184);
@@ -199,10 +222,20 @@ pub fn tokyo_night_day_visuals() -> egui::Visuals {
 
     visuals.window_fill = bg;
     visuals.window_stroke = egui::Stroke::new(1.0, bg_highlight);
-    visuals.window_shadow = egui::epaint::Shadow::NONE;
+    visuals.window_shadow = egui::epaint::Shadow {
+        offset: [0, 4],
+        blur: 16,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(40),
+    };
 
-    visuals.panel_fill = bg_highlight;
-    visuals.popup_shadow = egui::epaint::Shadow::NONE;
+    visuals.panel_fill = bg_highlight_darker;
+    visuals.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 2],
+        blur: 8,
+        spread: 0,
+        color: egui::Color32::from_black_alpha(30),
+    };
 
     visuals.resize_corner_size = 12.0;
     visuals.text_cursor.stroke = egui::Stroke::new(2.0, blue);

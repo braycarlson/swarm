@@ -98,7 +98,7 @@ fn render_search_bar(
                                 .min_size(egui::vec2(row_height, row_height))
                                 .fill(egui::Color32::TRANSPARENT)
                                 .stroke(egui::Stroke::NONE)
-                        );
+                        ).on_hover_cursor(egui::CursorIcon::PointingHand);
 
                         if !model.search.query.is_empty() && clear.clicked() {
                             let _ = sender.send(Msg::Search(Search::Cleared));

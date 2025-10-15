@@ -8,6 +8,7 @@ use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::services::filesystem::index::{IndexFile, IndexStatistics};
 use crate::ui::themes::Theme;
+use crate::ui::widget::toast::ToastSystem;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum OptionsTab {
@@ -145,11 +146,13 @@ impl SessionsModel {
 
     fn get_session_position(&self, id: &str) -> usize {
         let mut ids: Vec<_> = self.sessions.keys().cloned().collect();
+
         ids.sort_by(|a, b| {
             let sa = self.sessions.get(a).unwrap();
             let sb = self.sessions.get(b).unwrap();
             sa.created_at.cmp(&sb.created_at)
         });
+
         ids.iter().position(|sid| sid == id).unwrap_or(0)
     }
 
@@ -159,6 +162,7 @@ impl SessionsModel {
         }
 
         let mut ids: Vec<_> = self.sessions.keys().cloned().collect();
+
         ids.sort_by(|a, b| {
             let sa = self.sessions.get(a).unwrap();
             let sb = self.sessions.get(b).unwrap();
@@ -347,6 +351,7 @@ pub enum IndexStatus {
 #[derive(Clone)]
 pub struct UiState {
     pub theme: Theme,
+    pub should_focus: bool,
     pub show_options: bool,
     pub show_about: bool,
     pub editing_session: Option<String>,
@@ -356,6 +361,7 @@ pub struct UiState {
     pub new_exclude_filter: String,
     pub file_dialog_pending: bool,
     pub copy_in_progress: bool,
+    pub toast: ToastSystem,
     pub tree_gen_in_progress: bool,
 }
 
@@ -363,6 +369,7 @@ impl UiState {
     pub fn new(theme: Theme) -> Self {
         Self {
             theme,
+            should_focus: false,
             show_options: false,
             show_about: false,
             editing_session: None,
@@ -372,6 +379,7 @@ impl UiState {
             new_exclude_filter: String::new(),
             file_dialog_pending: false,
             copy_in_progress: false,
+            toast: ToastSystem::new(),
             tree_gen_in_progress: false,
         }
     }
