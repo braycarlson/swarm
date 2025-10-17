@@ -6,9 +6,11 @@ pub fn handle(model: &mut Model, ui: &mut UiState, msg: Filter) -> Cmd {
         Filter::IncludeAdded(filter) => handle_include_filter_added(model, ui, filter),
         Filter::IncludeRemoved(index) => handle_include_filter_removed(model, index),
         Filter::IncludesCleared => handle_include_filters_cleared(model),
+        Filter::IncludeFilterChanged(text) => handle_include_filter_changed(ui, text),
         Filter::ExcludeAdded(filter) => handle_exclude_filter_added(model, ui, filter),
         Filter::ExcludeRemoved(index) => handle_exclude_filter_removed(model, index),
         Filter::ExcludesReset => handle_exclude_filters_reset(model),
+        Filter::ExcludeFilterChanged(text) => handle_exclude_filter_changed(ui, text),
     }
 }
 
@@ -40,6 +42,11 @@ fn handle_include_filters_cleared(model: &mut Model) -> Cmd {
     Cmd::None
 }
 
+fn handle_include_filter_changed(ui: &mut UiState, text: String) -> Cmd {
+    ui.new_include_filter = text;
+    Cmd::None
+}
+
 fn handle_exclude_filter_added(model: &mut Model, ui: &mut UiState, filter: String) -> Cmd {
     let mut new_options = (*model.options).clone();
 
@@ -64,5 +71,10 @@ fn handle_exclude_filters_reset(model: &mut Model) -> Cmd {
     new_options.reset_excludes_to_defaults();
     model.update_options(new_options);
 
+    Cmd::None
+}
+
+fn handle_exclude_filter_changed(ui: &mut UiState, text: String) -> Cmd {
+    ui.new_exclude_filter = text;
     Cmd::None
 }

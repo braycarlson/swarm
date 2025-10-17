@@ -205,9 +205,14 @@ fn render_includes(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender:
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.vertical(|ui| {
-                render_filter_input(ui, &ui_state.new_include_filter, "Enter pattern (e.g., *.rs, *.txt)", |filter| {
-                    Msg::Filter(Filter::IncludeAdded(filter))
-                }, sender);
+                render_filter_input(
+                    ui,
+                    &ui_state.new_include_filter,
+                    "Enter pattern (e.g., *.rs, *.txt)",
+                    |filter| Msg::Filter(Filter::IncludeAdded(filter)),
+                    |filter| Msg::Filter(Filter::IncludeFilterChanged(filter)),
+                    sender
+                );
 
                 ui.add_space(10.0);
 
@@ -221,9 +226,14 @@ fn render_excludes(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender:
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.vertical(|ui| {
-                render_filter_input(ui, &ui_state.new_exclude_filter, "Enter pattern (e.g., *.log, node_modules)", |filter| {
-                    Msg::Filter(Filter::ExcludeAdded(filter))
-                }, sender);
+                render_filter_input(
+                    ui,
+                    &ui_state.new_exclude_filter,
+                    "Enter pattern (e.g., *.log, node_modules)",
+                    |filter| Msg::Filter(Filter::ExcludeAdded(filter)),
+                    |filter| Msg::Filter(Filter::ExcludeFilterChanged(filter)),
+                    sender
+                );
 
                 ui.add_space(10.0);
 
@@ -232,14 +242,16 @@ fn render_excludes(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender:
         });
 }
 
-fn render_filter_input<F>(
+fn render_filter_input<F, G>(
     ui: &mut egui::Ui,
     current_value: &str,
     hint: &str,
-    create_msg: F,
+    create_add_msg: F,
+    create_change_msg: G,
     sender: &Sender<Msg>,
 ) where
     F: Fn(String) -> Msg,
+    G: Fn(String) -> Msg,
 {
     ui.horizontal(|ui| {
         let mut filter = current_value.to_string();
@@ -249,13 +261,17 @@ fn render_filter_input<F>(
                 .desired_width(ui.available_width() - 50.0)
         );
 
+        if response.changed() {
+            sender.send(create_change_msg(filter.clone())).ok();
+        }
+
         let add_enabled = !filter.trim().is_empty();
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
 
         if ui.add_enabled(add_enabled, egui::Button::new("Add")).clicked()
             || (enter && response.has_focus() && add_enabled)
         {
-            sender.send(create_msg(filter)).ok();
+            sender.send(create_add_msg(filter)).ok();
         }
     });
 }

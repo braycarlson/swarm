@@ -97,9 +97,11 @@ pub enum Filter {
     IncludeAdded(String),
     IncludeRemoved(usize),
     IncludesCleared,
+    IncludeFilterChanged(String),
     ExcludeAdded(String),
     ExcludeRemoved(usize),
     ExcludesReset,
+    ExcludeFilterChanged(String),
 }
 
 #[derive(Debug, Clone)]

@@ -18,7 +18,7 @@ pub fn is_binary_file(path: &Path) -> bool {
 
             // Video files
             "mp4" | "avi" | "mov" | "wmv" | "flv" | "mkv" | "webm" | "m4v" |
-            "mpg" | "mpeg" | "3gp" | "ogv" | "m2ts" | "mts" | "vob" | "ts" |
+            "mpg" | "mpeg" | "3gp" | "ogv" | "m2ts" | "mts" | "vob" |
 
             // Audio files
             "mp3" | "wav" | "flac" | "aac" | "ogg" | "wma" | "m4a" | "opus" |
