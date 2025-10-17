@@ -17,6 +17,10 @@ fn handle_copy_requested(model: &mut Model, ui: &mut UiState) -> Cmd {
         return Cmd::None;
     }
 
+    for node in &mut model.tree.nodes {
+        node.expand_all_checked(&model.options);
+    }
+
     let paths = model.tree.gather_checked_paths(&model.search);
 
     if paths.is_empty() {
@@ -37,11 +41,11 @@ fn handle_copy_started(ui: &mut UiState) -> Cmd {
     Cmd::None
 }
 
-fn handle_copy_completed(model: &mut Model, ui: &mut UiState, output: String) -> Cmd {
-    model.tree.output = output;
+fn handle_copy_completed(model: &mut Model, ui: &mut UiState, message: String) -> Cmd {
+    model.tree.output = String::new();
     ui.copy_in_progress = false;
 
-    ui.toast.success("Copied to clipboard");
+    ui.toast.success(message);
 
     Cmd::None
 }
@@ -49,6 +53,8 @@ fn handle_copy_completed(model: &mut Model, ui: &mut UiState, output: String) ->
 fn handle_copy_failed(ui: &mut UiState, error: String) -> Cmd {
     ui.copy_in_progress = false;
     eprintln!("Copy failed: {}", error);
+
+    ui.toast.error(format!("Copy failed: {}", error));
 
     Cmd::None
 }

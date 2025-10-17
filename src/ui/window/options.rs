@@ -255,6 +255,7 @@ fn render_filter_input<F, G>(
 {
     ui.horizontal(|ui| {
         let mut filter = current_value.to_string();
+
         let response = ui.add(
             egui::TextEdit::singleline(&mut filter)
                 .hint_text(hint)

@@ -66,6 +66,7 @@ pub fn nord_visuals() -> egui::Visuals {
     };
 
     visuals.panel_fill = polar_night_1;
+
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 2],
         blur: 8,

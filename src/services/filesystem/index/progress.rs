@@ -28,6 +28,7 @@ impl ProgressReporter {
                         let _ = result_sender_clone.send(IndexResult::Progress(stats.clone()));
                     }
                 }
+
                 thread::sleep(Duration::from_millis(100));
             }
         });

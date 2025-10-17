@@ -10,10 +10,11 @@ use eframe::egui;
 use single_instance::SingleInstance;
 
 use crate::app::state::SessionData;
+use crate::services::worker::BackgroundLoadResult;
 use crate::ui::view::View;
 
 use dispatcher::Dispatcher;
-use message::{App, Cmd, CmdBuilder, Index, Msg};
+use message::{App, Cmd, CmdBuilder, Msg, Tree};
 use runtime::Runtime;
 use state::{IndexStatus, Model, UiState};
 
@@ -39,6 +40,7 @@ impl SwarmApp {
 
         let ipc_thread = if instance_guard.is_some() {
             let ipc_sender = msg_sender.clone();
+
             Some(std::thread::spawn(move || {
                 use std::net::TcpListener;
                 use std::io::Read;
@@ -47,6 +49,7 @@ impl SwarmApp {
                     for stream in listener.incoming().flatten() {
                         let mut stream = stream;
                         let mut buffer = String::new();
+
                         if stream.read_to_string(&mut buffer).is_ok() {
                             let paths: Vec<std::path::PathBuf> = buffer
                                 .lines()
@@ -91,6 +94,17 @@ impl SwarmApp {
 
         messages.extend(self.runtime.poll());
 
+        if let Some(result) = self.model.background_loader.check_results() {
+            match result {
+                BackgroundLoadResult::Progress(loaded, total) => {
+                    messages.push(Msg::Tree(Tree::BackgroundLoadProgress { loaded, total }));
+                }
+                BackgroundLoadResult::NodesUpdated(nodes) => {
+                    messages.push(Msg::Tree(Tree::BackgroundLoadCompleted(nodes)));
+                }
+            }
+        }
+
         for msg in messages {
             let cmd = Dispatcher::dispatch(&mut self.model, &mut self.ui, msg);
             self.runtime.execute(cmd);
@@ -115,23 +129,22 @@ impl eframe::App for SwarmApp {
 
             if has_initial_paths {
                 let session = SessionData::new(format!("Session"));
-                let id = session.id.clone();
-                self.model.sessions.sessions.insert(id.clone(), session);
-                self.model.sessions.active_id = Some(id.clone());
+                let session_id = session.id.clone();
 
-                if let Some(session) = self.model.sessions.active_session_mut() {
-                    session.tree_state = self.model.tree.clone();
-                    session.mark_modified();
-                }
+                self.model.sessions.sessions.insert(session_id.clone(), session);
+                self.model.sessions.active_id = Some(session_id.clone());
+
+                self.model.background_loader.start_loading(
+                    self.model.tree.nodes.clone(),
+                    (*self.model.options).clone()
+                );
 
                 let mut builder = CmdBuilder::new();
-
-                if let Some(session_id) = &self.model.sessions.active_id {
-                    builder = builder.add(Cmd::SwitchIndexSession(session_id.clone()));
-                }
+                builder = builder.add(Cmd::SwitchIndexSession(session_id));
 
                 if self.model.options.auto_index_on_startup {
                     self.model.index.status = IndexStatus::Running { paused: false };
+
                     builder = builder.add(Cmd::StartIndexing {
                         paths: self.model.tree.nodes.iter().map(|n| n.path.clone()).collect(),
                         options: Arc::clone(&self.model.options),
@@ -139,29 +152,17 @@ impl eframe::App for SwarmApp {
                 }
 
                 let cmd = builder.build();
-
-                if !matches!(cmd, Cmd::None) {
-                    self.runtime.execute(cmd);
-                }
-            } else if self.model.sessions.sessions.is_empty() {
-                self.dispatch(Msg::App(App::Initialized));
+                self.runtime.execute(cmd);
             } else {
-                if let Some(active) = self.model.sessions.active_session() {
-                    self.model.tree = active.tree_state.clone();
-                    self.model.search = active.search_state.clone();
-
-                    if self.model.options.auto_index_on_startup && !self.model.tree.nodes.is_empty() {
-                        self.dispatch(Msg::Index(Index::StartRequested));
-                    }
-                }
+                self.dispatch(Msg::App(App::Initialized));
             }
         }
+
+        self.ui.toast.show(ctx);
 
         self.process_messages();
 
         View::render(ctx, &self.model, &self.ui, &self.msg_sender);
-
-        self.ui.toast.show(ctx);
 
         if matches!(
             self.model.index.status,
@@ -171,6 +172,7 @@ impl eframe::App for SwarmApp {
             state::LoadStatus::Loading { .. }
         ) || self.ui.copy_in_progress
           || self.ui.tree_gen_in_progress
+          || self.model.background_loader.is_running()
         {
             ctx.request_repaint();
         }

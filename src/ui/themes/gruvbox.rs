@@ -51,7 +51,7 @@ pub fn gruvbox_dark_visuals() -> egui::Visuals {
     visuals.warn_fg_color    = yellow;
     visuals.error_fg_color   = red;
 
-    visuals.window_fill   = bg0;
+    visuals.window_fill = bg0;
     visuals.window_stroke = egui::Stroke::new(1.0, bg1);
     visuals.window_shadow = egui::epaint::Shadow {
         offset: [0, 4],
@@ -60,7 +60,8 @@ pub fn gruvbox_dark_visuals() -> egui::Visuals {
         color: egui::Color32::from_black_alpha(80),
     };
 
-    visuals.panel_fill    = bg1_dark;
+    visuals.panel_fill = bg1_dark;
+
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 2],
         blur: 8,

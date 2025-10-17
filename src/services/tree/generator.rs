@@ -16,18 +16,20 @@ impl TreeGenerator {
 
     pub fn generate_tree(&self, root_nodes: &[FileNode]) -> String {
         let mut output = String::new();
-        writeln!(output, ".").unwrap();
+        writeln!(&mut output, ".").unwrap();
 
         let selected_roots: Vec<&FileNode> = root_nodes
             .iter()
             .filter(|node| node.is_selected())
             .collect();
 
-        let count = selected_roots.len();
+        let count = selected_roots.len() as u32;
+        let mut index: u32 = 0;
 
-        for (index, node) in selected_roots.iter().enumerate() {
-            let is_last = index == count - 1;
+        for node in selected_roots {
+            let is_last = (index + 1) == count;
             self.generate_recursive(node, "", is_last, &mut output);
+            index = index + 1;
         }
 
         output
@@ -36,10 +38,12 @@ impl TreeGenerator {
     fn generate_recursive(&self, node: &FileNode, prefix: &str, is_last: bool, output: &mut String) {
         let branch = if prefix.is_empty() {
             ""
-        } else if is_last {
-            "└── "
         } else {
-            "├── "
+            if is_last {
+                "└── "
+            } else {
+                "├── "
+            }
         };
 
         let name = node.file_name()
@@ -56,28 +60,34 @@ impl TreeGenerator {
 
         writeln!(output, "{}{}{}", prefix, branch, display_name).unwrap();
 
-        let new_prefix = if prefix.is_empty() {
-            if is_last {
-                "    ".to_string()
+        if node.is_directory() {
+            let new_prefix = if prefix.is_empty() {
+                if is_last {
+                    "    ".to_string()
+                } else {
+                    "│   ".to_string()
+                }
             } else {
-                "│   ".to_string()
+                if is_last {
+                    format!("{}    ", prefix)
+                } else {
+                    format!("{}│   ", prefix)
+                }
+            };
+
+            let selected_children: Vec<&FileNode> = node.children
+                .iter()
+                .filter(|child| child.is_selected())
+                .collect();
+
+            let count = selected_children.len() as u32;
+            let mut index: u32 = 0;
+
+            for child in selected_children {
+                let child_is_last = (index + 1) == count;
+                self.generate_recursive(child, &new_prefix, child_is_last, output);
+                index = index + 1;
             }
-        } else if is_last {
-            format!("{}    ", prefix)
-        } else {
-            format!("{}│   ", prefix)
-        };
-
-        let selected_children: Vec<&FileNode> = node.children
-            .iter()
-            .filter(|child| child.is_selected())
-            .collect();
-
-        let count = selected_children.len();
-
-        for (index, child) in selected_children.iter().enumerate() {
-            let child_is_last = index == count - 1;
-            self.generate_recursive(child, &new_prefix, child_is_last, output);
         }
     }
 }

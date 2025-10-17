@@ -19,7 +19,7 @@ impl GatherService {
         Self
     }
 
-    pub fn gather(&self, paths: &[String], options: &Options) -> SwarmResult<String> {
+    pub fn gather(&self, paths: &[String], options: &Options) -> SwarmResult<(String, usize)> {
         let include_set = Arc::new(self.build_globset(&options.include)?);
         let exclude_set = Arc::new(self.build_globset(&options.exclude)?);
 
@@ -40,7 +40,11 @@ impl GatherService {
             }
         }
 
-        self.format_output(&files, options.output_format)
+        let output = self.format_output(&files, options.output_format)?;
+
+        let total_lines: usize = output.lines().count();
+
+        Ok((output, total_lines))
     }
 
     fn collect_file(&self, path: &Path, files: &mut Vec<(String, String)>) {
@@ -157,22 +161,22 @@ impl GatherService {
     }
 
     fn build_globset(&self, patterns: &[String]) -> SwarmResult<GlobSet> {
-            let mut builder = GlobSetBuilder::new();
+        let mut builder = GlobSetBuilder::new();
 
-            for pattern in patterns {
-                if pattern.trim().is_empty() {
-                    continue;
-                }
-
-                let glob = Glob::new(pattern)
-                    .map_err(|error| SwarmError::Parse(format!("Invalid glob pattern '{}': {}", pattern, error)))?;
-
-                builder.add(glob);
+        for pattern in patterns {
+            if pattern.trim().is_empty() {
+                continue;
             }
 
-            builder.build()
-                .map_err(|error| SwarmError::Other(format!("Failed to build globset: {}", error)))
+            let glob = Glob::new(pattern)
+                .map_err(|error| SwarmError::Parse(format!("Invalid glob pattern '{}': {}", pattern, error)))?;
+
+            builder.add(glob);
         }
+
+        builder.build()
+            .map_err(|error| SwarmError::Other(format!("Failed to build globset: {}", error)))
+    }
 
     fn is_path_excluded(&self, path: &Path, exclude_set: &GlobSet) -> bool {
         if exclude_set.is_match(path) {
@@ -185,6 +189,7 @@ impl GatherService {
             if exclude_set.is_match(parent) {
                 return true;
             }
+
             current = parent;
         }
 
@@ -221,6 +226,7 @@ impl GatherService {
                     if exclude_clone.is_match(parent) {
                         return false;
                     }
+
                     current = parent;
                 }
 

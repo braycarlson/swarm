@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::model::options::Options;
 use crate::model::path::PathExtensions;
 use crate::services::tree::operations::TreeOperations;
 
@@ -117,6 +118,22 @@ impl FileNode {
         } else {
             for child in &self.children {
                 child.gather_checked_paths_recursive(out, query);
+            }
+        }
+    }
+
+    pub fn expand_all_checked(&mut self, options: &Options) {
+        if !self.is_selected() {
+            return;
+        }
+
+        if self.is_directory() {
+            if !self.loaded {
+                let _ = self.load_children(options);
+            }
+
+            for child in &mut self.children {
+                child.expand_all_checked(options);
             }
         }
     }

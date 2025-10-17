@@ -32,13 +32,8 @@ pub fn load_children(node: &mut FileNode, options: &Options) -> SwarmResult<bool
         }
 
         if child_path.is_dir() {
-            let mut child_node = FileNode::new(child_path);
-            let has_visible_content = load_children(&mut child_node, options)?;
-
-            if has_visible_content || options.include.is_empty() {
-                directories.push(child_node);
-            }
-
+            let child_node = FileNode::new(child_path);
+            directories.push(child_node);
             continue;
         }
 
@@ -77,12 +72,6 @@ pub fn refresh_node(node: &mut FileNode, options: &Options) -> SwarmResult<bool>
     node.children.clear();
 
     let has_visible_content = load_children(node, options)?;
-
-    for child in &mut node.children {
-        if child.is_directory() {
-            refresh_node(child, options)?;
-        }
-    }
 
     Ok(has_visible_content)
 }

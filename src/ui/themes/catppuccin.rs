@@ -69,6 +69,7 @@ pub fn catppuccin_mocha_visuals() -> egui::Visuals {
     };
 
     visuals.panel_fill = surface0_dark;
+
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 2],
         blur: 8,

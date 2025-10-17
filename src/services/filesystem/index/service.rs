@@ -236,6 +236,7 @@ impl IndexService {
             if let Ok(mut active_id) = self.active_session_id.lock() {
                 *active_id = Some(session_id);
             }
+
             true
         } else {
             false

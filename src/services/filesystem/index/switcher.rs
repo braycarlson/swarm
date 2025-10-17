@@ -46,12 +46,15 @@ impl SessionSwitcher {
         if let (Ok(index_lock), Ok(stats_lock)) = (index.lock(), stats.lock()) {
             if let Ok(mut session_data_lock) = session_data.lock() {
                 let mut data = SessionIndexData::default();
+
                 data.index = index_lock.clone();
                 data.stats = stats_lock.clone();
+
                 let extensions: HashSet<String> = index_lock
                     .values()
                     .filter_map(|file| file.extension.clone())
                     .collect();
+
                 data.extensions = extensions;
                 session_data_lock.insert(session_id, data);
             }

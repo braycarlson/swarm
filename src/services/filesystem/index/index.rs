@@ -130,11 +130,20 @@ impl IndexService {
     }
 
     pub fn check_results(&self) -> Option<IndexResult> {
-        self.receiver
-            .lock()
-            .ok()?
-            .try_recv()
-            .ok()
+        let receiver_lock = self.receiver.lock();
+
+        if receiver_lock.is_err() {
+            return None;
+        }
+
+        let receiver = receiver_lock.unwrap();
+        let result = receiver.try_recv();
+
+        if result.is_err() {
+            return None;
+        }
+
+        Some(result.unwrap())
     }
 
     pub fn filter_by_extension(&self, extension: &str) -> Vec<IndexFile> {
@@ -284,6 +293,7 @@ impl IndexService {
             if let Ok(mut active_id) = self.active_session_id.lock() {
                 *active_id = Some(session_id);
             }
+
             true
         } else {
             false

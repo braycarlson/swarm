@@ -25,6 +25,7 @@ fn main() -> Result<(), eframe::Error> {
                     let _ = stream.write_all(content.as_bytes());
                 }
             }
+
             return Ok(());
         }
 

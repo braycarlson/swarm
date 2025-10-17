@@ -6,6 +6,8 @@ use crate::app::state::{IndexStatus, LoadStatus, Model, UiState};
 
 use super::sync_to_active_session;
 
+const MAX_IPC_PATHS: u32 = 100;
+
 pub fn handle(model: &mut Model, ui: &mut UiState, msg: App) -> Cmd {
     match msg {
         App::Initialized => handle_app_initialized(model),
@@ -29,11 +31,12 @@ fn handle_app_initialized(model: &mut Model) -> Cmd {
     model.index.statistics = None;
     model.index.extensions.clear();
 
-    let mut builder = CmdBuilder::new()
-        .add(Cmd::SwitchIndexSession(session_id));
+    let mut builder = CmdBuilder::new();
+    builder = builder.add(Cmd::SwitchIndexSession(session_id));
 
     if model.options.auto_index_on_startup {
         model.index.status = IndexStatus::Running { paused: false };
+
         builder = builder.add(Cmd::StartIndexing {
             paths: vec![],
             options: Arc::clone(&model.options),
@@ -44,7 +47,10 @@ fn handle_app_initialized(model: &mut Model) -> Cmd {
 }
 
 fn handle_path_selected(model: &mut Model, ui: &mut UiState, path: PathBuf) -> Cmd {
-    let should_create_new = if let Some(session) = model.sessions.active_session() {
+    let active_session = model.sessions.active_session();
+
+    let should_create_new = if active_session.is_some() {
+        let session = active_session.unwrap();
         !session.tree_state.nodes.is_empty()
     } else {
         true
@@ -54,6 +60,7 @@ fn handle_path_selected(model: &mut Model, ui: &mut UiState, path: PathBuf) -> C
 
     let session_id = if should_create_new {
         sync_to_active_session(model);
+
         let session_name = format!("Session");
         let session_id = model.sessions.create_session(session_name);
 
@@ -62,7 +69,13 @@ fn handle_path_selected(model: &mut Model, ui: &mut UiState, path: PathBuf) -> C
 
         session_id
     } else {
-        model.sessions.active_id.clone().unwrap_or_default()
+        let active_id = model.sessions.active_id.clone();
+
+        if active_id.is_none() {
+            return Cmd::None;
+        }
+
+        active_id.unwrap()
     };
 
     cmd_builder = cmd_builder.add(Cmd::SwitchIndexSession(session_id));
@@ -95,15 +108,25 @@ fn handle_paths_from_ipc(model: &mut Model, _ui: &mut UiState, paths: Vec<PathBu
     model.tree = Default::default();
     model.search = Default::default();
 
-    let mut cmd_builder = CmdBuilder::new()
-        .add(Cmd::SwitchIndexSession(session_id));
+    let mut cmd_builder = CmdBuilder::new();
+    cmd_builder = cmd_builder.add(Cmd::SwitchIndexSession(session_id));
+
+    let path_count = paths.len();
 
     model.tree.load_status = LoadStatus::Loading {
-        message: format!("Loading {} paths", paths.len()),
-        progress: (0, paths.len()),
+        message: format!("Loading {} paths", path_count),
+        progress: (0, path_count),
     };
 
+    let mut processed_count: u32 = 0;
+
     for path in paths {
+        if processed_count >= MAX_IPC_PATHS {
+            break;
+        }
+
+        processed_count = processed_count + 1;
+
         cmd_builder = cmd_builder.add(Cmd::LoadSession {
             path,
             options: Arc::clone(&model.options),

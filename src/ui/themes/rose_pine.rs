@@ -130,6 +130,7 @@ fn apply_common_settings(
     };
 
     visuals.panel_fill = surface;
+
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 2],
         blur: 8,

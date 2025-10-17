@@ -111,6 +111,7 @@ fn handle_session_deleted(model: &mut Model, id: String) -> Cmd {
 
             if needs_indexing {
                 model.index.status = IndexStatus::Running { paused: false };
+
                 builder = builder.add(Cmd::StartIndexing {
                     paths: model.tree.nodes.iter().map(|n| n.path.clone()).collect(),
                     options: Arc::clone(&model.options),
@@ -133,6 +134,7 @@ fn handle_session_deleted(model: &mut Model, id: String) -> Cmd {
 fn handle_session_renamed(model: &mut Model, ui: &mut UiState, id: String, name: String) -> Cmd {
     model.sessions.rename_session(&id, name);
     ui.cancel_session_edit();
+
     Cmd::None
 }
 

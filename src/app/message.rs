@@ -5,10 +5,11 @@ use std::sync::Arc;
 use crate::app::state::OptionsTab;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
+use crate::model::output::OutputFormat;
 use crate::services::filesystem::index::IndexStatistics;
 use crate::ui::themes::Theme;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum Msg {
     Session(Session),
     Tree(Tree),
@@ -41,6 +42,11 @@ pub enum Tree {
     Loaded(Vec<FileNode>),
     LoadProgress { current: String, processed: usize, total: usize },
     LoadFailed(String),
+    PropagateStarted,
+    PropagateCompleted(Vec<FileNode>),
+    PropagateFailed(String),
+    BackgroundLoadProgress { loaded: usize, total: usize },
+    BackgroundLoadCompleted(Vec<FileNode>),
 }
 
 #[derive(Debug, Clone)]
@@ -89,7 +95,7 @@ pub enum Options_ {
     AutoIndexChanged(bool),
     DeleteSessionsChanged(bool),
     SingleInstanceChanged(bool),
-    OutputFormatChanged(crate::model::output::OutputFormat),
+    OutputFormatChanged(OutputFormat),
 }
 
 #[derive(Debug, Clone)]
@@ -129,6 +135,12 @@ pub enum Cmd {
     GenerateTree { nodes: Vec<FileNode>, options: Arc<Options> },
     SaveSessions,
     DeleteSessionData(String),
+    PropagateCheckedWithLoad {
+        nodes: Vec<FileNode>,
+        path: Vec<u32>,
+        checked: bool,
+        options: Arc<Options>,
+    },
     Batch(Vec<Cmd>),
     None,
 }

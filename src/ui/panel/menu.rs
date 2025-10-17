@@ -74,6 +74,7 @@ fn render_session_tabs(
     sessions.sort_by_key(|(_, s)| s.created_at);
 
     let available_width = ui.available_width();
+
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(available_width, 28.0),
         egui::Sense::click(),

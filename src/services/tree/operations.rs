@@ -8,6 +8,7 @@ pub trait TreeOperations {
     fn load_all_children(&mut self, options: &Options) -> SwarmResult<bool>;
     fn matches_search(&self, query: &str) -> bool;
     fn propagate_checked(&mut self, checked: bool);
+    fn propagate_checked_with_load(&mut self, checked: bool, options: &Options);
     fn refresh(&mut self, options: &Options) -> SwarmResult<bool>;
 }
 
@@ -45,6 +46,20 @@ impl TreeOperations for FileNode {
         if self.is_directory() {
             for child in &mut self.children {
                 child.propagate_checked(checked);
+            }
+        }
+    }
+
+    fn propagate_checked_with_load(&mut self, checked: bool, options: &Options) {
+        self.checked = checked;
+
+        if self.is_directory() {
+            if !self.loaded {
+                let _ = self.load_children(options);
+            }
+
+            for child in &mut self.children {
+                child.propagate_checked_with_load(checked, options);
             }
         }
     }

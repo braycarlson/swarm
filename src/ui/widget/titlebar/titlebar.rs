@@ -40,6 +40,7 @@ impl TitleBar {
                 );
 
                 let drag_response = ui.interact(drag_rect, ui.id().with("title_drag"), Sense::drag());
+
                 if drag_response.dragged() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
@@ -60,6 +61,7 @@ impl TitleBar {
                             title_bar_rect.right_top() - vec2(button_width, 0.0),
                             egui::vec2(button_width, title_bar_height),
                         );
+
                         let close_response = ui.interact(close_rect, ui.id().with("close"), Sense::click());
 
                         if close_response.hovered() {
@@ -84,10 +86,12 @@ impl TitleBar {
                         ui.add_space(button_width);
 
                         let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+
                         let maximize_rect = Rect::from_min_size(
                             title_bar_rect.right_top() - vec2(button_width * 2.0, 0.0),
                             egui::vec2(button_width, title_bar_height),
                         );
+
                         let maximize_response =
                             ui.interact(maximize_rect, ui.id().with("maximize"), Sense::click());
 

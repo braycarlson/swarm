@@ -62,6 +62,7 @@ pub fn dracula_visuals() -> egui::Visuals {
     };
 
     visuals.panel_fill = current_line_dark;
+
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 2],
         blur: 8,

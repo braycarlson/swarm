@@ -1,9 +1,13 @@
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::thread;
 
 use copypasta::{ClipboardContext, ClipboardProvider};
 
+use crate::app::message::{Cmd, Copy, Index, Msg, Session, TreeGen};
+use crate::app::state::{SessionData, SessionsModel};
+use crate::constants::APP_NAME;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::services::filesystem::gather::GatherService;
@@ -13,30 +17,57 @@ use crate::services::tree::operations::TreeOperations;
 use crate::services::worker::session::{SessionLoadResult, SessionLoader};
 use crate::services::worker::tree::{TreeLoadResult, TreeLoader};
 
-use super::message::{Cmd, Copy, Index, Msg, Session, Tree, TreeGen};
-use super::state::SessionsModel;
+const MAX_MESSAGES_PER_POLL: u32 = 20;
 
 pub struct Runtime {
-    index_service: IndexService,
-    session_loader: SessionLoader,
-    tree_loader: TreeLoader,
     gather_service: GatherService,
-    msg_sender: Sender<Msg>,
     gather_tx: Option<Sender<()>>,
+    index_service: IndexService,
+    msg_sender: Sender<Msg>,
+    session_loader: SessionLoader,
     tree_gen_tx: Option<Sender<()>>,
+    tree_loader: TreeLoader,
 }
 
 impl Runtime {
     pub fn new(msg_sender: Sender<Msg>) -> Self {
         Self {
-            index_service: IndexService::new(),
-            session_loader: SessionLoader::new(),
-            tree_loader: TreeLoader::new(),
             gather_service: GatherService::new(),
-            msg_sender,
             gather_tx: None,
+            index_service: IndexService::new(),
+            msg_sender: msg_sender.clone(),
+            session_loader: SessionLoader::new(),
             tree_gen_tx: None,
+            tree_loader: TreeLoader::new(),
         }
+    }
+
+    pub fn load_sessions(&self) -> SessionsModel {
+        if let Some(dir) = self.get_sessions_directory() {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                let mut sessions = SessionsModel::new();
+
+                for entry in entries.flatten() {
+                    let path = entry.path();
+
+                    if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            if let Ok(session) = serde_json::from_str::<SessionData>(&content) {
+                                sessions.sessions.insert(session.id.clone(), session);
+                            }
+                        }
+                    }
+                }
+
+                if let Some((first_id, _)) = sessions.sessions.iter().next() {
+                    sessions.active_id = Some(first_id.clone());
+                }
+
+                return sessions;
+            }
+        }
+
+        SessionsModel::new()
     }
 
     pub fn execute(&mut self, cmd: Cmd) {
@@ -99,6 +130,10 @@ impl Runtime {
                 self.delete_session_file(&id);
             }
 
+            Cmd::PropagateCheckedWithLoad { nodes, path, checked, options } => {
+                self.execute_propagate_with_load(nodes, path, checked, options);
+            }
+
             Cmd::Batch(cmds) => {
                 for cmd in cmds {
                     self.execute(cmd);
@@ -110,48 +145,113 @@ impl Runtime {
     }
 
     pub fn poll(&mut self) -> Vec<Msg> {
-        [
-            self.poll_session_loader(),
-            self.poll_tree_loader(),
-            self.poll_index_service(),
-        ]
-        .into_iter()
-        .flatten()
-        .collect()
+        let mut all_messages = Vec::new();
+
+        let session_messages = self.poll_session_loader();
+        all_messages.extend(session_messages);
+
+        let tree_messages = self.poll_tree_loader();
+        all_messages.extend(tree_messages);
+
+        let index_messages = self.poll_index_service();
+        all_messages.extend(index_messages);
+
+        all_messages
     }
 
     fn poll_session_loader(&mut self) -> Vec<Msg> {
-        std::iter::from_fn(|| self.session_loader.check_results())
-            .filter_map(|result| match result {
-                SessionLoadResult::Loaded(nodes) => Some(Msg::Tree(Tree::Loaded(nodes))),
-                SessionLoadResult::Error(error) => Some(Msg::Tree(Tree::LoadFailed(error))),
+        let mut messages = Vec::new();
+        let mut count: u32 = 0;
+
+        loop {
+            if count >= MAX_MESSAGES_PER_POLL {
+                break;
+            }
+
+            let result = self.session_loader.check_results();
+
+            if result.is_none() {
+                break;
+            }
+
+            count = count + 1;
+
+            let result = result.unwrap();
+
+            let msg = match result {
+                SessionLoadResult::Loaded(nodes) => Some(Msg::Tree(crate::app::message::Tree::Loaded(nodes))),
+                SessionLoadResult::Error(error) => Some(Msg::Tree(crate::app::message::Tree::LoadFailed(error))),
                 SessionLoadResult::Loading(_) => None,
-            })
-            .collect()
+            };
+
+            if msg.is_some() {
+                messages.push(msg.unwrap());
+            }
+        }
+
+        messages
     }
 
     fn poll_tree_loader(&mut self) -> Vec<Msg> {
-        std::iter::from_fn(|| self.tree_loader.check_results())
-            .map(|result| match result {
-                TreeLoadResult::LoadedTree(nodes) => Msg::Tree(Tree::Loaded(nodes)),
-                TreeLoadResult::ProcessingPath(path) => Msg::Tree(Tree::LoadProgress {
+        let mut messages = Vec::new();
+        let mut count: u32 = 0;
+
+        loop {
+            if count >= MAX_MESSAGES_PER_POLL {
+                break;
+            }
+
+            let result = self.tree_loader.check_results();
+
+            if result.is_none() {
+                break;
+            }
+
+            count = count + 1;
+
+            let result = result.unwrap();
+
+            let msg = match result {
+                TreeLoadResult::LoadedTree(nodes) => Msg::Tree(crate::app::message::Tree::Loaded(nodes)),
+                TreeLoadResult::ProcessingPath(path) => Msg::Tree(crate::app::message::Tree::LoadProgress {
                     current: path,
                     processed: 0,
                     total: 0,
                 }),
-                TreeLoadResult::CountUpdate(processed, total) => Msg::Tree(Tree::LoadProgress {
+                TreeLoadResult::CountUpdate(processed, total) => Msg::Tree(crate::app::message::Tree::LoadProgress {
                     current: String::new(),
                     processed,
                     total,
                 }),
-                TreeLoadResult::Error(error) => Msg::Tree(Tree::LoadFailed(error)),
-            })
-            .collect()
+                TreeLoadResult::Error(error) => Msg::Tree(crate::app::message::Tree::LoadFailed(error)),
+            };
+
+            messages.push(msg);
+        }
+
+        messages
     }
 
     fn poll_index_service(&mut self) -> Vec<Msg> {
-        std::iter::from_fn(|| self.index_service.check_results())
-            .map(|result| match result {
+        let mut messages = Vec::new();
+        let mut count: u32 = 0;
+
+        loop {
+            if count >= MAX_MESSAGES_PER_POLL {
+                break;
+            }
+
+            let result = self.index_service.check_results();
+
+            if result.is_none() {
+                break;
+            }
+
+            count = count + 1;
+
+            let result = result.unwrap();
+
+            let msg = match result {
                 IndexResult::Progress(stats) => Msg::Index(Index::Progress(stats)),
                 IndexResult::Completed(_count) => {
                     let extensions: Vec<_> = self.index_service
@@ -165,8 +265,12 @@ impl Runtime {
                     })
                 }
                 IndexResult::Error(error) => Msg::Index(Index::Failed(error)),
-            })
-            .collect()
+            };
+
+            messages.push(msg);
+        }
+
+        messages
     }
 
     fn execute_gather(&mut self, paths: Vec<String>, options: Arc<Options>) {
@@ -186,12 +290,13 @@ impl Runtime {
             }
 
             match gather.gather(&paths, &options) {
-                Ok(output) => {
+                Ok((output, line_count)) => {
                     if let Ok(mut clipboard) = ClipboardContext::new() {
                         let _ = clipboard.set_contents(output.clone());
                     }
 
-                    let _ = sender.send(Msg::Copy(Copy::Completed(output)));
+                    let message = format!("{} lines copied", line_count);
+                    let _ = sender.send(Msg::Copy(Copy::Completed(message)));
                 }
                 Err(e) => {
                     let _ = sender.send(Msg::Copy(Copy::Failed(e.to_string())));
@@ -226,6 +331,45 @@ impl Runtime {
         });
     }
 
+    fn execute_propagate_with_load(
+        &mut self,
+        mut nodes: Vec<FileNode>,
+        path: Vec<u32>,
+        checked: bool,
+        options: Arc<Options>,
+    ) {
+        let sender = self.msg_sender.clone();
+
+        sender.send(Msg::Tree(crate::app::message::Tree::PropagateStarted)).ok();
+
+        thread::spawn(move || {
+            thread::sleep(std::time::Duration::from_millis(100));
+
+            let mut current = &mut nodes;
+            let mut target_node: Option<&mut FileNode> = None;
+
+            for (i, &index) in path.iter().enumerate() {
+                if i == path.len() - 1 {
+                    if let Some(node) = current.get_mut(index as usize) {
+                        target_node = Some(node);
+                    }
+
+                    break;
+                } else if let Some(node) = current.get_mut(index as usize) {
+                    current = &mut node.children;
+                } else {
+                    break;
+                }
+            }
+
+            if let Some(node) = target_node {
+                node.propagate_checked_with_load(checked, &options);
+            }
+
+            let _ = sender.send(Msg::Tree(crate::app::message::Tree::PropagateCompleted(nodes)));
+        });
+    }
+
     fn delete_session_file(&self, id: &str) {
         if let Some(dir) = self.get_sessions_directory() {
             let path = dir.join(format!("{}.json", id));
@@ -236,9 +380,9 @@ impl Runtime {
         }
     }
 
-    fn get_sessions_directory(&self) -> Option<std::path::PathBuf> {
+    fn get_sessions_directory(&self) -> Option<PathBuf> {
         dirs::data_local_dir()
-            .map(|d| d.join(crate::constants::APP_NAME.to_lowercase()).join("sessions"))
+            .map(|d| d.join(APP_NAME.to_lowercase()).join("sessions"))
     }
 
     pub fn save_sessions(&self, sessions: &SessionsModel) {
@@ -252,56 +396,6 @@ impl Runtime {
                     let _ = std::fs::write(path, json);
                 }
             }
-
-            if let Some(active_id) = &sessions.active_id {
-                let active_path = dir.join("active_session.txt");
-                let _ = std::fs::write(active_path, active_id);
-            }
         }
-    }
-
-    pub fn load_sessions(&self) -> SessionsModel {
-        let mut sessions = SessionsModel::new();
-
-        if let Some(dir) = self.get_sessions_directory() {
-            if !dir.exists() {
-                return sessions;
-            }
-
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-
-                    if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            if let Ok(session) = serde_json::from_str(&content) {
-                                let id = path.file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .map(String::from)
-                                    .unwrap_or_default();
-
-                                sessions.sessions.insert(id, session);
-                            }
-                        }
-                    }
-                }
-            }
-
-            let active = dir.join("active_session.txt");
-
-            if active.exists() {
-                if let Ok(id) = std::fs::read_to_string(&active) {
-                    if sessions.sessions.contains_key(&id) {
-                        sessions.active_id = Some(id);
-                    }
-                }
-            }
-
-            if sessions.active_id.is_none() && !sessions.sessions.is_empty() {
-                sessions.active_id = sessions.sessions.keys().next().cloned();
-            }
-        }
-
-        sessions
     }
 }

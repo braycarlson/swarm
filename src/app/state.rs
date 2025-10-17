@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::services::filesystem::index::{IndexFile, IndexStatistics};
+use crate::services::worker::BackgroundLoader;
 use crate::ui::themes::Theme;
 use crate::ui::widget::toast::ToastSystem;
 
@@ -43,6 +44,7 @@ impl OptionsState {
 
 #[derive(Clone)]
 pub struct Model {
+    pub background_loader: BackgroundLoader,
     pub sessions: SessionsModel,
     pub tree: TreeModel,
     pub search: SearchModel,
@@ -57,6 +59,7 @@ impl Model {
         let sessions = SessionsModel::new();
 
         Self {
+            background_loader: BackgroundLoader::new(),
             sessions,
             tree: TreeModel::new(initial_paths),
             search: SearchModel::default(),
@@ -93,14 +96,6 @@ impl SessionsModel {
         }
     }
 
-    pub fn active_session(&self) -> Option<&SessionData> {
-        self.active_id.as_ref().and_then(|id| self.sessions.get(id))
-    }
-
-    pub fn active_session_mut(&mut self) -> Option<&mut SessionData> {
-        self.active_id.as_ref().and_then(|id| self.sessions.get_mut(id))
-    }
-
     pub fn create_session(&mut self, name: String) -> String {
         let session = SessionData::new(name);
         let id = session.id.clone();
@@ -129,6 +124,14 @@ impl SessionsModel {
         self.active_id.clone()
     }
 
+    pub fn active_session(&self) -> Option<&SessionData> {
+        self.active_id.as_ref().and_then(|id| self.sessions.get(id))
+    }
+
+    pub fn active_session_mut(&mut self) -> Option<&mut SessionData> {
+        self.active_id.as_ref().and_then(|id| self.sessions.get_mut(id))
+    }
+
     pub fn sync_from_tree_and_search(&mut self, tree: TreeModel, search: SearchModel) {
         if let Some(session) = self.active_session_mut() {
             session.tree_state = tree;
@@ -137,9 +140,15 @@ impl SessionsModel {
         }
     }
 
-    pub fn rename_session(&mut self, id: &str, name: String) {
+    pub fn session_list(&self) -> Vec<&SessionData> {
+        let mut sessions: Vec<&SessionData> = self.sessions.values().collect();
+        sessions.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        sessions
+    }
+
+    pub fn rename_session(&mut self, id: &str, new_name: String) {
         if let Some(session) = self.sessions.get_mut(id) {
-            session.name = name;
+            session.name = new_name;
             session.mark_modified();
         }
     }

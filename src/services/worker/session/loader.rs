@@ -35,12 +35,21 @@ impl SessionLoader {
         }
     }
 
-    pub fn check_results(&self) -> Option<SessionLoadResult> {
-        self.receiver
-            .lock()
-            .ok()?
-            .try_recv()
-            .ok()
+    pub fn check_results(&mut self) -> Option<SessionLoadResult> {
+        let receiver_lock = self.receiver.lock();
+
+        if receiver_lock.is_err() {
+            return None;
+        }
+
+        let receiver = receiver_lock.unwrap();
+        let result = receiver.try_recv();
+
+        if result.is_err() {
+            return None;
+        }
+
+        Some(result.unwrap())
     }
 
     pub fn start_loading(&self, path: PathBuf, options: Options) -> bool {
@@ -48,7 +57,10 @@ impl SessionLoader {
             return false;
         }
 
-        if self.sender.send(SessionLoadCommand::Load(path, options)).is_ok() {
+        let command = SessionLoadCommand::Load(path, options);
+        let send_result = self.sender.send(command);
+
+        if send_result.is_ok() {
             self.loading.store(true, Ordering::Relaxed);
             true
         } else {
@@ -75,14 +87,21 @@ impl SessionLoader {
         result_sender: Sender<SessionLoadResult>,
         loading: Arc<AtomicBool>,
     ) {
-        while let Ok(command) = command_receiver.recv() {
+        loop {
+            let command = command_receiver.recv();
+
+            if command.is_err() {
+                break;
+            }
+
+            let command = command.unwrap();
+
             match command {
                 SessionLoadCommand::Load(path, options) => {
                     loading.store(true, Ordering::Relaxed);
 
-                    let _ = result_sender.send(SessionLoadResult::Loading(
-                        format!("Loading {}", path.display()),
-                    ));
+                    let loading_msg = format!("Loading {}", path.display());
+                    let _ = result_sender.send(SessionLoadResult::Loading(loading_msg));
 
                     match Self::load_path(path.clone(), &options) {
                         Ok(nodes) => {
@@ -91,11 +110,8 @@ impl SessionLoader {
                         }
                         Err(error) => {
                             loading.store(false, Ordering::Relaxed);
-                            let _ = result_sender.send(SessionLoadResult::Error(format!(
-                                "Failed to load path {}: {}",
-                                path.display(),
-                                error
-                            )));
+                            let error_msg = format!("Failed to load path {}: {}", path.display(), error);
+                            let _ = result_sender.send(SessionLoadResult::Error(error_msg));
                         }
                     }
                 }

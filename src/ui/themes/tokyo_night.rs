@@ -64,6 +64,7 @@ pub fn tokyo_night_visuals() -> egui::Visuals {
     };
 
     visuals.panel_fill = bg_highlight_dark;
+
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 2],
         blur: 8,
@@ -147,6 +148,7 @@ pub fn tokyo_night_storm_visuals() -> egui::Visuals {
     };
 
     visuals.panel_fill = bg_highlight_dark;
+
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 2],
         blur: 8,
@@ -230,6 +232,7 @@ pub fn tokyo_night_day_visuals() -> egui::Visuals {
     };
 
     visuals.panel_fill = bg_highlight_darker;
+
     visuals.popup_shadow = egui::epaint::Shadow {
         offset: [0, 2],
         blur: 8,
