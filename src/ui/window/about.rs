@@ -22,7 +22,7 @@ pub fn render(ctx: &egui::Context, sender: &Sender<Msg>) {
                 .show(ui, |ui| {
                     ui.vertical(|ui| {
                         ui.vertical_centered(|ui| {
-                            ui.heading(&format!("{} [v{}]", APP_NAME, APP_VERSION));
+                            ui.heading(format!("{} [v{}]", APP_NAME, APP_VERSION));
                         });
 
                         ui.add_space(60.0);

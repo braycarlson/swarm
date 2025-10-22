@@ -34,15 +34,11 @@ fn handle_tree_refresh_requested(model: &mut Model, _ui: &mut UiState) -> Cmd {
         progress: (0, 0),
     };
 
-    let mut builder = CmdBuilder::new()
+    let builder = CmdBuilder::new()
         .add(Cmd::RefreshTree {
             nodes: model.tree.nodes.clone(),
             options: Arc::clone(&model.options),
         });
-
-    if let Some(session_id) = &model.sessions.active_id {
-        builder = builder.add(Cmd::SwitchIndexSession(session_id.clone()));
-    }
 
     builder.build()
 }
@@ -56,8 +52,8 @@ fn handle_tree_node_toggled(model: &mut Model, path: Vec<usize>, checked: bool, 
         return Cmd::None;
     }
 
-    if let Some(result) = model.background_loader.check_results() {
-        if let crate::services::worker::BackgroundLoadResult::NodesUpdated(nodes) = result {
+    if let Some(result) = model.background_loader.check_results()
+        && let crate::services::worker::BackgroundLoadResult::NodesUpdated(nodes) = result {
             let current_states = model.tree.collect_checkbox_states();
 
             model.tree.nodes = nodes;
@@ -65,7 +61,6 @@ fn handle_tree_node_toggled(model: &mut Model, path: Vec<usize>, checked: bool, 
 
             sync_to_active_session(model);
         }
-    }
 
     let mut current = &model.tree.nodes;
     let mut target_is_dir = false;
@@ -147,19 +142,13 @@ fn handle_tree_loaded(model: &mut Model, _ui: &mut UiState, nodes: Vec<FileNode>
     model.tree.nodes = nodes.clone();
     model.tree.restore_checkbox_states(&states_to_restore);
     model.tree.load_status = LoadStatus::Loaded;
+    model.tree.update_file_count();
 
     sync_to_active_session(model);
 
     model.background_loader.start_loading(nodes, (*model.options).clone());
 
-    if !model.options.auto_index_on_startup {
-        Cmd::None
-    } else {
-        Cmd::StartIndexing {
-            paths: model.tree.nodes.iter().map(|n| n.path.clone()).collect(),
-            options: Arc::clone(&model.options),
-        }
-    }
+    Cmd::None
 }
 
 fn handle_tree_load_progress(model: &mut Model, current: String, processed: usize, total: usize) -> Cmd {
@@ -188,6 +177,7 @@ fn handle_propagate_started(model: &mut Model) -> Cmd {
 fn handle_propagate_completed(model: &mut Model, nodes: Vec<FileNode>) -> Cmd {
     model.tree.nodes = nodes;
     model.tree.load_status = LoadStatus::Loaded;
+    model.tree.update_file_count();
     sync_to_active_session(model);
 
     Cmd::None
@@ -206,6 +196,7 @@ fn handle_background_load_completed(model: &mut Model, nodes: Vec<FileNode>) -> 
     let current_states = model.tree.collect_checkbox_states();
     model.tree.nodes = nodes;
     model.tree.restore_checkbox_states(&current_states);
+    model.tree.update_file_count();
     sync_to_active_session(model);
 
     Cmd::None

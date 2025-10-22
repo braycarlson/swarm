@@ -21,6 +21,12 @@ pub struct DialogSystem {
     title: String,
 }
 
+impl Default for DialogSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DialogSystem {
     pub fn new() -> Self {
         Self {
@@ -95,8 +101,16 @@ impl DialogSystem {
     }
 }
 
+type DialogSender = Arc<Mutex<Option<mpsc::Sender<(DialogType, String)>>>>;
+
 pub struct DialogService {
-    sender: Arc<Mutex<Option<mpsc::Sender<(DialogType, String)>>>>,
+    sender: DialogSender,
+}
+
+impl Default for DialogService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DialogService {

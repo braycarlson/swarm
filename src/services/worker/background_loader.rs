@@ -23,6 +23,12 @@ pub struct BackgroundLoader {
     sender: Sender<BackgroundLoadCommand>,
 }
 
+impl Default for BackgroundLoader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BackgroundLoader {
     pub fn new() -> Self {
         let (command_sender, command_receiver) = mpsc::channel();
@@ -127,7 +133,7 @@ impl BackgroundLoader {
                 if node.load_children(options).is_ok() {
                     *loaded += 1;
 
-                    if *loaded % 100 == 0 {
+                    if (*loaded).is_multiple_of(100) {
                         let _ = result_sender.send(BackgroundLoadResult::Progress(*loaded, total));
                     }
                 }

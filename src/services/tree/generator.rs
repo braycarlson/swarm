@@ -23,13 +23,11 @@ impl TreeGenerator {
             .filter(|node| node.is_selected())
             .collect();
 
-        let count = selected_roots.len() as u32;
-        let mut index: u32 = 0;
+        let count = selected_roots.len();
 
-        for node in selected_roots {
-            let is_last = (index + 1) == count;
+        for (index, node) in selected_roots.into_iter().enumerate() {
+            let is_last = index == count - 1;
             self.generate_recursive(node, "", is_last, &mut output);
-            index = index + 1;
         }
 
         output
@@ -38,12 +36,10 @@ impl TreeGenerator {
     fn generate_recursive(&self, node: &FileNode, prefix: &str, is_last: bool, output: &mut String) {
         let branch = if prefix.is_empty() {
             ""
+        } else if is_last {
+            "└── "
         } else {
-            if is_last {
-                "└── "
-            } else {
-                "├── "
-            }
+            "├── "
         };
 
         let name = node.file_name()
@@ -67,12 +63,10 @@ impl TreeGenerator {
                 } else {
                     "│   ".to_string()
                 }
+            } else if is_last {
+                format!("{}    ", prefix)
             } else {
-                if is_last {
-                    format!("{}    ", prefix)
-                } else {
-                    format!("{}│   ", prefix)
-                }
+                format!("{}│   ", prefix)
             };
 
             let selected_children: Vec<&FileNode> = node.children
@@ -80,13 +74,11 @@ impl TreeGenerator {
                 .filter(|child| child.is_selected())
                 .collect();
 
-            let count = selected_children.len() as u32;
-            let mut index: u32 = 0;
+            let count = selected_children.len();
 
-            for child in selected_children {
-                let child_is_last = (index + 1) == count;
+            for (index, child) in selected_children.into_iter().enumerate() {
+                let child_is_last = index == count - 1;
                 self.generate_recursive(child, &new_prefix, child_is_last, output);
-                index = index + 1;
             }
         }
     }

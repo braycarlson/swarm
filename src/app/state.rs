@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::node::FileNode;
 use crate::model::options::Options;
-use crate::services::filesystem::index::{IndexFile, IndexStatistics};
 use crate::services::worker::BackgroundLoader;
 use crate::ui::themes::Theme;
 use crate::ui::widget::toast::ToastSystem;
@@ -48,7 +47,6 @@ pub struct Model {
     pub sessions: SessionsModel,
     pub tree: TreeModel,
     pub search: SearchModel,
-    pub index: IndexModel,
     pub options: Arc<Options>,
     pub original_options: Arc<Options>,
 }
@@ -63,7 +61,6 @@ impl Model {
             sessions,
             tree: TreeModel::new(initial_paths),
             search: SearchModel::default(),
-            index: IndexModel::default(),
             options: Arc::clone(&options),
             original_options: options,
         }
@@ -200,7 +197,6 @@ pub struct SessionData {
     pub name: String,
     pub created_at: u64,
     pub last_modified: u64,
-    pub has_been_indexed: bool,
     pub tree_state: TreeModel,
     pub search_state: SearchModel,
 }
@@ -217,7 +213,6 @@ impl SessionData {
             name,
             created_at: now,
             last_modified: now,
-            has_been_indexed: false,
             tree_state: TreeModel::default(),
             search_state: SearchModel::default(),
         }
@@ -238,6 +233,8 @@ pub struct TreeModel {
     pub load_status: LoadStatus,
     #[serde(skip)]
     pub states: Option<std::collections::HashMap<PathBuf, bool>>,
+    #[serde(skip)]
+    pub file_count: usize,
 }
 
 impl TreeModel {
@@ -251,6 +248,7 @@ impl TreeModel {
             output: String::new(),
             load_status: LoadStatus::NotStarted,
             states: None,
+            file_count: 0,
         }
     }
 
@@ -260,6 +258,10 @@ impl TreeModel {
             node.collect_checkbox_states_recursive(&mut states);
         }
         states
+    }
+
+    pub fn count_files(&self) -> usize {
+        self.nodes.iter().map(count_files_recursive).sum()
     }
 
     pub fn restore_checkbox_states(&mut self, states: &std::collections::HashMap<PathBuf, bool>) {
@@ -281,6 +283,18 @@ impl TreeModel {
     pub fn create_filtered_tree(&self, search: &SearchModel) -> Vec<FileNode> {
         let query = if search.has_query() { &search.query } else { "" };
         self.nodes.iter().filter_map(|n| n.filter_selected(query)).collect()
+    }
+
+    pub fn update_file_count(&mut self) {
+        self.file_count = self.count_files();
+    }
+}
+
+fn count_files_recursive(node: &FileNode) -> usize {
+    if node.is_file() {
+        1
+    } else {
+        node.children.iter().map(count_files_recursive).sum()
     }
 }
 
@@ -322,39 +336,6 @@ impl SearchModel {
         self.query = query;
         self.active = true;
     }
-}
-
-#[derive(Clone)]
-pub struct IndexModel {
-    pub status: IndexStatus,
-    pub statistics: Option<IndexStatistics>,
-    pub extensions: std::collections::HashSet<String>,
-    pub active_extension: Option<String>,
-    pub search_query: String,
-    pub search_results: Vec<IndexFile>,
-    pub max_search_results: usize,
-}
-
-impl Default for IndexModel {
-    fn default() -> Self {
-        Self {
-            status: IndexStatus::Idle,
-            statistics: None,
-            extensions: std::collections::HashSet::new(),
-            active_extension: None,
-            search_query: String::new(),
-            search_results: Vec::new(),
-            max_search_results: 100,
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum IndexStatus {
-    Idle,
-    Running { paused: bool },
-    Completed,
-    Failed(String),
 }
 
 #[derive(Clone)]

@@ -30,7 +30,7 @@ pub fn render(
                     ui.separator();
 
                     if ui.button("New Session").clicked() {
-                        sender.send(Msg::Session(Session::Created(format!("Session")))).ok();
+                        sender.send(Msg::Session(Session::Created("Session".to_string()))).ok();
                         ui.close();
                     }
 
@@ -50,7 +50,7 @@ pub fn render(
                 });
 
                 ui.menu_button("About", |ui| {
-                    if ui.button(&format!("About {}", APP_NAME)).clicked() {
+                    if ui.button(format!("About {}", APP_NAME)).clicked() {
                         sender.send(Msg::App(App::AboutOpened)).ok();
                         ui.close();
                     }
@@ -99,12 +99,12 @@ fn render_session_tabs(
     }
 
     if response.double_clicked() {
-        sender.send(Msg::Session(Session::Created(format!("Session")))).ok();
+        sender.send(Msg::Session(Session::Created("Session".to_string()))).ok();
     }
 
     response.context_menu(|ui| {
         if ui.button("New Session").clicked() {
-            sender.send(Msg::Session(Session::Created(format!("Session")))).ok();
+            sender.send(Msg::Session(Session::Created("Session".to_string()))).ok();
             ui.close();
         }
     });

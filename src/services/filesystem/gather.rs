@@ -14,6 +14,12 @@ use crate::model::path::PathExtensions;
 #[derive(Clone)]
 pub struct GatherService;
 
+impl Default for GatherService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GatherService {
     pub fn new() -> Self {
         Self
@@ -69,11 +75,10 @@ impl GatherService {
                 SwarmError::Other(format!("Error reading directory {}: {}", directory.display(), error))
             })?;
 
-            if entry.file_type().map_or(false, |file_type| file_type.is_file()) {
-                if self.should_include_file(entry.path(), include_set, exclude_set, options) {
+            if entry.file_type().is_some_and(|file_type| file_type.is_file())
+                && self.should_include_file(entry.path(), include_set, exclude_set, options) {
                     self.collect_file(entry.path(), files);
                 }
-            }
         }
 
         Ok(())
@@ -230,7 +235,7 @@ impl GatherService {
                     current = parent;
                 }
 
-                let is_directory = entry.file_type().map_or(false, |file_type| file_type.is_dir());
+                let is_directory = entry.file_type().is_some_and(|file_type| file_type.is_dir());
 
                 if is_directory {
                     return true;

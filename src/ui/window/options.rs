@@ -147,12 +147,6 @@ fn render_behavior_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg
     if ui.checkbox(&mut single_instance, "Use a single instance (requires restart)").clicked() {
         sender.send(Msg::Options(Options_::SingleInstanceChanged(single_instance))).ok();
     }
-
-    let mut auto_index = model.options.auto_index_on_startup;
-
-    if ui.checkbox(&mut auto_index, "Auto-index on startup").clicked() {
-        sender.send(Msg::Options(Options_::AutoIndexChanged(auto_index))).ok();
-    }
 }
 
 fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg>) {
@@ -192,10 +186,8 @@ fn render_integration_section(ui: &mut egui::Ui) {
             if let Err(e) = crate::context::register() {
                 eprintln!("Failed to register context menu: {}", e);
             }
-        } else {
-            if let Err(e) = crate::context::unregister() {
-                eprintln!("Failed to unregister context menu: {}", e);
-            }
+        } else if let Err(e) = crate::context::unregister() {
+            eprintln!("Failed to unregister context menu: {}", e);
         }
     }
 }
