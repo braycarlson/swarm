@@ -47,6 +47,12 @@ pub struct ToastSystem {
     toasts: VecDeque<Toast>,
 }
 
+impl Default for ToastSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToastSystem {
     pub fn new() -> Self {
         Self {

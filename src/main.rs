@@ -2,6 +2,8 @@
 
 use single_instance::SingleInstance;
 use std::env;
+use std::io::Write;
+use std::net::TcpStream;
 use std::path::Path;
 use swarm::{SwarmApp, APP_NAME};
 
@@ -16,14 +18,11 @@ fn main() -> Result<(), eframe::Error> {
             .expect("Failed to create single instance guard");
 
         if !guard.is_single() {
-            if !paths.is_empty() {
-                use std::net::TcpStream;
-                use std::io::Write;
-
-                if let Ok(mut stream) = TcpStream::connect("127.0.0.1:44287") {
-                    let content = paths.join("\n");
-                    let _ = stream.write_all(content.as_bytes());
-                }
+            if !paths.is_empty()
+                && let Ok(mut stream) = TcpStream::connect("127.0.0.1:44287")
+            {
+                let content = paths.join("\n");
+                let _ = stream.write_all(content.as_bytes());
             }
 
             return Ok(());

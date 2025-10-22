@@ -11,9 +11,6 @@ use crate::ui::themes::Theme;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Options {
     #[serde(default)]
-    pub auto_index_on_startup: bool,
-
-    #[serde(default)]
     pub delete_sessions_on_exit: bool,
 
     #[serde(default = "default_exclude_patterns")]
@@ -135,7 +132,6 @@ fn default_single_instance() -> bool {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            auto_index_on_startup: false,
             delete_sessions_on_exit: false,
             exclude: default_exclude_patterns(),
             include: Vec::new(),
@@ -199,8 +195,7 @@ impl Options {
     }
 
     pub fn is_equal(&self, other: &Self) -> bool {
-        self.auto_index_on_startup == other.auto_index_on_startup
-            && self.delete_sessions_on_exit == other.delete_sessions_on_exit
+        self.delete_sessions_on_exit == other.delete_sessions_on_exit
             && self.exclude == other.exclude
             && self.include == other.include
             && self.output_format == other.output_format
@@ -226,6 +221,7 @@ impl Options {
 
         self.include.remove(index);
         let _ = self.save();
+
         true
     }
 

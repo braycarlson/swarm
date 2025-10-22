@@ -1,10 +1,9 @@
 use std::sync::mpsc::Sender;
 
 use eframe::egui;
-use humansize::{format_size, BINARY};
 
-use crate::app::message::{Copy, Index, Msg, TreeGen};
-use crate::app::state::{IndexStatus, LoadStatus, Model, UiState};
+use crate::app::message::{Copy, Msg, TreeGen};
+use crate::app::state::{LoadStatus, Model, UiState};
 
 pub fn render(
     ctx: &egui::Context,
@@ -55,9 +54,15 @@ pub fn render(
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        render_index_status(ui, model, sender);
                         ui.add_space(10.0);
                         render_tree_loading_status(ui, model);
+
+                        if !tree_is_loading && model.tree.file_count > 0 {
+                            ui.label(
+                                egui::RichText::new(format!("{} files", model.tree.file_count))
+                                    .color(ui.visuals().weak_text_color())
+                            );
+                        }
                     });
                 });
 
@@ -77,53 +82,4 @@ fn render_tree_loading_status(ui: &mut egui::Ui, model: &Model) {
             );
         }
     }
-}
-
-fn render_index_status(
-    ui: &mut egui::Ui,
-    model: &Model,
-    sender: &Sender<Msg>,
-) {
-    ui.horizontal(|ui| {
-        match &model.index.status {
-            IndexStatus::Running { paused } => {
-                if ui.small_button("⏹").clicked() {
-                    sender.send(Msg::Index(Index::StopRequested)).ok();
-                }
-
-                if *paused {
-                    if ui.small_button("▶").clicked() {
-                        sender.send(Msg::Index(Index::ResumeRequested)).ok();
-                    }
-                } else {
-                    if ui.small_button("⏸").clicked() {
-                        sender.send(Msg::Index(Index::PauseRequested)).ok();
-                    }
-                }
-
-                ui.label(if *paused { "Indexing paused" } else { "Indexing in progress" });
-            }
-            _ => {
-                if ui.small_button("🔄").clicked() {
-                    sender.send(Msg::Index(Index::StartRequested)).ok();
-                }
-
-                if let Some(stats) = &model.index.statistics {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "Indexed: {} files ({})",
-                            stats.indexed_files,
-                            format_size(stats.total_size, BINARY)
-                        ))
-                        .color(ui.visuals().weak_text_color())
-                    );
-                } else {
-                    ui.label(
-                        egui::RichText::new("Index not built")
-                            .color(ui.visuals().weak_text_color())
-                    );
-                }
-            }
-        }
-    });
 }

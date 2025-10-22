@@ -1,12 +1,11 @@
 pub mod app;
 pub mod copy;
 pub mod filter;
-pub mod index;
+pub mod generator;
 pub mod options;
 pub mod search;
 pub mod session;
 pub mod tree;
-pub mod tree_gen;
 
 use crate::app::state::Model;
 use crate::model::node::FileNode;
@@ -64,7 +63,7 @@ pub fn load_node_children(nodes: &mut [FileNode], path: &[u32], options: &Option
             current = &mut node.children;
         }
 
-        depth = depth + 1;
+        depth += 1;
     }
 }
 
@@ -96,11 +95,10 @@ pub fn toggle_node(nodes: &mut [FileNode], path: &[u32], checked: bool, propagat
             let node = node_option.unwrap();
             node.checked = checked;
 
-            if propagate {
-                if node.is_directory() {
+            if propagate
+                && node.is_directory() {
                     node.propagate_checked_with_load(checked, options);
                 }
-            }
 
             break;
         } else {
@@ -114,6 +112,6 @@ pub fn toggle_node(nodes: &mut [FileNode], path: &[u32], checked: bool, propagat
             current = &mut node.children;
         }
 
-        depth = depth + 1;
+        depth += 1;
     }
 }

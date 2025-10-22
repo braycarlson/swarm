@@ -14,6 +14,16 @@ where
     task_sender: Sender<TaskCommand<T, R>>,
 }
 
+impl<T, R> Default for TaskExecutor<T, R>
+where
+    T: Send + 'static,
+    R: Send + Clone + 'static,
+ {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T, R> TaskExecutor<T, R>
 where
     T: Send + 'static,

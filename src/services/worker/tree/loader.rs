@@ -16,6 +16,12 @@ pub struct TreeLoader {
     status: TreeLoadStatus,
 }
 
+impl Default for TreeLoader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TreeLoader {
     pub fn new() -> Self {
         let (command_sender, command_receiver) = mpsc::channel();
@@ -99,8 +105,6 @@ impl TreeLoader {
         let _ = result_sender.send(TreeLoadResult::CountUpdate(0, total_count));
         let mut processed_count: u32 = 0;
 
-        let mut node_index: u32 = 0;
-
         for node in nodes.iter_mut() {
             let process_result = Self::process_single_node(
                 node,
@@ -111,20 +115,16 @@ impl TreeLoader {
                 &mut visible,
             );
 
-            if process_result.is_err() {
-                let error = process_result.unwrap_err();
+            if let Err(error) = process_result {
                 let _ = result_sender.send(TreeLoadResult::Error(error));
                 return;
             }
-
-            node_index = node_index + 1;
         }
 
-        if visible.is_empty() {
-            if nodes.len() > 0 {
+        if visible.is_empty()
+            && !nodes.is_empty() {
                 visible.push(nodes[0].clone());
             }
-        }
 
         thread::sleep(Duration::from_millis(300));
         let _ = result_sender.send(TreeLoadResult::LoadedTree(visible));
@@ -145,7 +145,7 @@ impl TreeLoader {
         let path_string = node.path.to_string_lossy().to_string();
         let _ = result_sender.send(TreeLoadResult::ProcessingPath(path_string));
 
-        *processed_count = *processed_count + 1;
+        *processed_count += 1;
         let _ = result_sender.send(TreeLoadResult::CountUpdate(*processed_count as usize, *total_count));
 
         thread::sleep(Duration::from_millis(10));
@@ -153,8 +153,7 @@ impl TreeLoader {
 
         let refresh_result = node.refresh(options);
 
-        if refresh_result.is_err() {
-            let error = refresh_result.unwrap_err();
+        if let Err(error) = refresh_result {
             return Err(format!("Error refreshing node {}: {}", node.path.display(), error));
         }
 
@@ -171,7 +170,7 @@ impl TreeLoader {
         }
 
         let child_count = Self::count_loaded_nodes(node);
-        *total_count = *total_count + child_count;
+        *total_count += child_count;
         let _ = result_sender.send(TreeLoadResult::CountUpdate(*processed_count as usize, *total_count));
 
         Self::process_loaded_nodes(node, result_sender, processed_count, *total_count);
@@ -184,13 +183,13 @@ impl TreeLoader {
         let mut count: usize = 0;
 
         for child in &node.children {
-            count = count + 1;
+            count += 1;
 
             let is_loaded_dir = child.is_directory() && child.loaded;
 
             if is_loaded_dir {
                 let child_count = Self::count_loaded_nodes(child);
-                count = count + child_count;
+                count += child_count;
             }
         }
 
@@ -207,7 +206,7 @@ impl TreeLoader {
             let path_string = child.path.to_string_lossy().to_string();
             let _ = result_sender.send(TreeLoadResult::ProcessingPath(path_string));
 
-            *processed_count = *processed_count + 1;
+            *processed_count += 1;
             let _ = result_sender.send(TreeLoadResult::CountUpdate(*processed_count as usize, total_count));
 
             thread::sleep(Duration::from_millis(10));

@@ -16,6 +16,12 @@ pub struct SessionLoader {
     sender: Sender<SessionLoadCommand>,
 }
 
+impl Default for SessionLoader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SessionLoader {
     pub fn new() -> Self {
         let (command_sender, command_receiver) = mpsc::channel();

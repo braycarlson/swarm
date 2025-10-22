@@ -5,7 +5,6 @@ pub mod runtime;
 pub mod state;
 
 use std::sync::mpsc;
-use std::sync::Arc;
 use eframe::egui;
 use single_instance::SingleInstance;
 
@@ -14,9 +13,9 @@ use crate::services::worker::BackgroundLoadResult;
 use crate::ui::view::View;
 
 use dispatcher::Dispatcher;
-use message::{App, Cmd, CmdBuilder, Msg, Tree};
+use message::{App, CmdBuilder, Msg, Tree};
 use runtime::Runtime;
-use state::{IndexStatus, Model, UiState};
+use state::{Model, UiState};
 
 pub struct SwarmApp {
     model: Model,
@@ -128,7 +127,7 @@ impl eframe::App for SwarmApp {
             self.model.sessions = self.runtime.load_sessions();
 
             if has_initial_paths {
-                let session = SessionData::new(format!("Session"));
+                let session = SessionData::new("Session".to_string());
                 let session_id = session.id.clone();
 
                 self.model.sessions.sessions.insert(session_id.clone(), session);
@@ -139,19 +138,9 @@ impl eframe::App for SwarmApp {
                     (*self.model.options).clone()
                 );
 
-                let mut builder = CmdBuilder::new();
-                builder = builder.add(Cmd::SwitchIndexSession(session_id));
-
-                if self.model.options.auto_index_on_startup {
-                    self.model.index.status = IndexStatus::Running { paused: false };
-
-                    builder = builder.add(Cmd::StartIndexing {
-                        paths: self.model.tree.nodes.iter().map(|n| n.path.clone()).collect(),
-                        options: Arc::clone(&self.model.options),
-                    });
-                }
-
+                let builder = CmdBuilder::new();
                 let cmd = builder.build();
+
                 self.runtime.execute(cmd);
             } else {
                 self.dispatch(Msg::App(App::Initialized));
@@ -165,9 +154,6 @@ impl eframe::App for SwarmApp {
         View::render(ctx, &self.model, &self.ui, &self.msg_sender);
 
         if matches!(
-            self.model.index.status,
-            state::IndexStatus::Running { .. }
-        ) || matches!(
             self.model.tree.load_status,
             state::LoadStatus::Loading { .. }
         ) || self.ui.copy_in_progress

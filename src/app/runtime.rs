@@ -5,13 +5,12 @@ use std::thread;
 
 use copypasta::{ClipboardContext, ClipboardProvider};
 
-use crate::app::message::{Cmd, Copy, Index, Msg, Session, TreeGen};
+use crate::app::message::{Cmd, Copy, Msg, TreeGen};
 use crate::app::state::{SessionData, SessionsModel};
 use crate::constants::APP_NAME;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::services::filesystem::gather::GatherService;
-use crate::services::filesystem::index::{IndexResult, IndexService};
 use crate::services::tree::generator::TreeGenerator;
 use crate::services::tree::operations::TreeOperations;
 use crate::services::worker::session::{SessionLoadResult, SessionLoader};
@@ -22,7 +21,6 @@ const MAX_MESSAGES_PER_POLL: u32 = 20;
 pub struct Runtime {
     gather_service: GatherService,
     gather_tx: Option<Sender<()>>,
-    index_service: IndexService,
     msg_sender: Sender<Msg>,
     session_loader: SessionLoader,
     tree_gen_tx: Option<Sender<()>>,
@@ -34,7 +32,6 @@ impl Runtime {
         Self {
             gather_service: GatherService::new(),
             gather_tx: None,
-            index_service: IndexService::new(),
             msg_sender: msg_sender.clone(),
             session_loader: SessionLoader::new(),
             tree_gen_tx: None,
@@ -43,20 +40,18 @@ impl Runtime {
     }
 
     pub fn load_sessions(&self) -> SessionsModel {
-        if let Some(dir) = self.get_sessions_directory() {
-            if let Ok(entries) = std::fs::read_dir(dir) {
+        if let Some(dir) = self.get_sessions_directory()
+            && let Ok(entries) = std::fs::read_dir(dir) {
                 let mut sessions = SessionsModel::new();
 
                 for entry in entries.flatten() {
                     let path = entry.path();
 
-                    if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            if let Ok(session) = serde_json::from_str::<SessionData>(&content) {
+                    if path.extension().and_then(|s| s.to_str()) == Some("json")
+                        && let Ok(content) = std::fs::read_to_string(&path)
+                            && let Ok(session) = serde_json::from_str::<SessionData>(&content) {
                                 sessions.sessions.insert(session.id.clone(), session);
                             }
-                        }
-                    }
                 }
 
                 if let Some((first_id, _)) = sessions.sessions.iter().next() {
@@ -65,7 +60,6 @@ impl Runtime {
 
                 return sessions;
             }
-        }
 
         SessionsModel::new()
     }
@@ -83,36 +77,6 @@ impl Runtime {
                 }
 
                 self.tree_loader.start_load(refreshed, (*options).clone());
-            }
-
-            Cmd::StartIndexing { paths, options } => {
-                self.index_service.start_indexing(paths, (*options).clone());
-            }
-
-            Cmd::StopIndexing => {
-                self.index_service.stop_indexing();
-            }
-
-            Cmd::PauseIndexing => {
-                self.index_service.pause_indexing();
-            }
-
-            Cmd::ResumeIndexing => {
-                self.index_service.resume_indexing();
-            }
-
-            Cmd::SwitchIndexSession(id) => {
-                self.index_service.switch_session(id);
-            }
-
-            Cmd::LoadSessionIndexData(id) => {
-                let statistics = self.index_service.get_session_statistics(&id);
-                let extensions = self.index_service.get_session_extensions(&id);
-
-                let _ = self.msg_sender.send(Msg::Session(Session::IndexDataLoaded {
-                    statistics,
-                    extensions,
-                }));
             }
 
             Cmd::GatherFiles { paths, options } => {
@@ -153,9 +117,6 @@ impl Runtime {
         let tree_messages = self.poll_tree_loader();
         all_messages.extend(tree_messages);
 
-        let index_messages = self.poll_index_service();
-        all_messages.extend(index_messages);
-
         all_messages
     }
 
@@ -174,7 +135,7 @@ impl Runtime {
                 break;
             }
 
-            count = count + 1;
+            count += 1;
 
             let result = result.unwrap();
 
@@ -184,8 +145,8 @@ impl Runtime {
                 SessionLoadResult::Loading(_) => None,
             };
 
-            if msg.is_some() {
-                messages.push(msg.unwrap());
+            if let Some(m) = msg {
+                messages.push(m);
             }
         }
 
@@ -207,7 +168,7 @@ impl Runtime {
                 break;
             }
 
-            count = count + 1;
+            count += 1;
 
             let result = result.unwrap();
 
@@ -224,47 +185,6 @@ impl Runtime {
                     total,
                 }),
                 TreeLoadResult::Error(error) => Msg::Tree(crate::app::message::Tree::LoadFailed(error)),
-            };
-
-            messages.push(msg);
-        }
-
-        messages
-    }
-
-    fn poll_index_service(&mut self) -> Vec<Msg> {
-        let mut messages = Vec::new();
-        let mut count: u32 = 0;
-
-        loop {
-            if count >= MAX_MESSAGES_PER_POLL {
-                break;
-            }
-
-            let result = self.index_service.check_results();
-
-            if result.is_none() {
-                break;
-            }
-
-            count = count + 1;
-
-            let result = result.unwrap();
-
-            let msg = match result {
-                IndexResult::Progress(stats) => Msg::Index(Index::Progress(stats)),
-                IndexResult::Completed(_count) => {
-                    let extensions: Vec<_> = self.index_service
-                        .get_all_extensions()
-                        .into_iter()
-                        .collect();
-
-                    Msg::Index(Index::Completed {
-                        count: self.index_service.get_indexed_count(),
-                        extensions,
-                    })
-                }
-                IndexResult::Error(error) => Msg::Index(Index::Failed(error)),
             };
 
             messages.push(msg);

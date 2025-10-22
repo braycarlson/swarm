@@ -144,24 +144,22 @@ pub fn is_development_directory(path: &Path) -> bool {
 }
 
 pub fn is_path_in_excluded_patterns(path: &Path, exclude_patterns: &[String]) -> bool {
-    if let Some(filename) = path.file_name_string() {
-        if exclude_patterns.iter()
+    if let Some(filename) = path.file_name_string()
+        && exclude_patterns.iter()
             .any(|pattern| !pattern.is_empty() && pattern_matches(&filename, pattern))
         {
             return true;
         }
-    }
 
     let mut current = path;
 
     while let Some(parent) = current.parent() {
-        if let Some(parent_name) = parent.file_name_string() {
-            if exclude_patterns.iter()
+        if let Some(parent_name) = parent.file_name_string()
+            && exclude_patterns.iter()
                 .any(|pattern| !pattern.is_empty() && pattern_matches(&parent_name, pattern))
             {
                 return true;
             }
-        }
         current = parent;
     }
 
@@ -221,7 +219,7 @@ pub fn should_include_path(path: &Path, options: &Options) -> bool {
             .any(|pattern| {
                 !pattern.is_empty()
                     && path.file_name_string()
-                        .map_or(false, |name| pattern_matches(&name, pattern))
+                        .is_some_and(|name| pattern_matches(&name, pattern))
             });
 
         if !include_matched {
