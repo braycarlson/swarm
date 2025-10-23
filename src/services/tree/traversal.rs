@@ -3,7 +3,7 @@ use crate::model::options::Options;
 use crate::model::error::SwarmResult;
 use crate::services::tree::loader;
 
-pub trait TreeOperations {
+pub trait Traversable {
     fn load_children(&mut self, options: &Options) -> SwarmResult<bool>;
     fn load_all_children(&mut self, options: &Options) -> SwarmResult<bool>;
     fn matches_search(&self, query: &str) -> bool;
@@ -12,7 +12,7 @@ pub trait TreeOperations {
     fn refresh(&mut self, options: &Options) -> SwarmResult<bool>;
 }
 
-impl TreeOperations for FileNode {
+impl Traversable for FileNode {
     fn load_children(&mut self, options: &Options) -> SwarmResult<bool> {
         loader::load_children(self, options)
     }

@@ -27,6 +27,13 @@ pub fn render(
                         open_file_dialog(sender);
                     }
 
+                    let has_tree = !model.tree.nodes.is_empty();
+
+                    if ui.add_enabled(has_tree, egui::Button::new("Open in Explorer")).clicked() {
+                        sender.send(Msg::App(App::OpenInExplorer)).ok();
+                        ui.close();
+                    }
+
                     ui.separator();
 
                     if ui.button("New Session").clicked() {

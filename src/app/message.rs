@@ -13,7 +13,7 @@ pub enum Msg {
     Tree(Tree),
     Search(Search),
     Copy(Copy),
-    TreeGen(TreeGen),
+    Render(Render),
     Options(Options_),
     Filter(Filter),
     App(App),
@@ -61,7 +61,7 @@ pub enum Copy {
 }
 
 #[derive(Debug, Clone)]
-pub enum TreeGen {
+pub enum Render {
     Requested,
     Started,
     Generated(String),
@@ -101,6 +101,7 @@ pub enum App {
     AboutOpened,
     AboutClosed,
     Tick,
+    OpenInExplorer
 }
 
 #[derive(Debug)]
@@ -108,7 +109,7 @@ pub enum Cmd {
     LoadSession { path: PathBuf, options: Arc<Options> },
     RefreshTree { nodes: Vec<FileNode>, options: Arc<Options> },
     GatherFiles { paths: Vec<String>, options: Arc<Options> },
-    GenerateTree { nodes: Vec<FileNode>, options: Arc<Options> },
+    RenderTree { nodes: Vec<FileNode>, options: Arc<Options> },
     SaveSessions,
     DeleteSessionData(String),
     PropagateCheckedWithLoad {

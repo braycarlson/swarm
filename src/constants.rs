@@ -1,2 +1,2 @@
 pub const APP_NAME: &str = "swarm";
-pub const APP_VERSION: &str = "0.0.3";
+pub const APP_VERSION: &str = "0.0.4";

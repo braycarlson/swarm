@@ -1,8 +1,8 @@
 pub mod app;
 pub mod copy;
 pub mod filter;
-pub mod generator;
 pub mod options;
+pub mod render;
 pub mod search;
 pub mod session;
 pub mod tree;
@@ -10,7 +10,7 @@ pub mod tree;
 use crate::app::state::Model;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
-use crate::services::tree::operations::TreeOperations;
+use crate::services::tree::traversal::Traversable;
 
 const MAX_PATH_DEPTH: u32 = 100;
 
@@ -95,10 +95,9 @@ pub fn toggle_node(nodes: &mut [FileNode], path: &[u32], checked: bool, propagat
             let node = node_option.unwrap();
             node.checked = checked;
 
-            if propagate
-                && node.is_directory() {
-                    node.propagate_checked_with_load(checked, options);
-                }
+            if propagate && node.is_directory() {
+                node.propagate_checked_with_load(checked, options);
+            }
 
             break;
         } else {
