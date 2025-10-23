@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::model::options::Options;
 use crate::model::path::PathExtensions;
-use crate::services::tree::operations::TreeOperations;
+use crate::services::tree::traversal::Traversable;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum NodeKind {

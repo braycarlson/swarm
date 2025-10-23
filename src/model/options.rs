@@ -8,7 +8,7 @@ use crate::model::error::{SwarmError, SwarmResult};
 use crate::model::output::OutputFormat;
 use crate::ui::themes::Theme;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Options {
     #[serde(default)]
     pub delete_sessions_on_exit: bool,
@@ -35,40 +35,44 @@ pub struct Options {
 fn default_exclude_patterns() -> Vec<String> {
     vec![
         ".git".to_string(),
-        ".hg".to_string(),
-        ".idea".to_string(),
-        ".npm".to_string(),
-        ".pytest_cache".to_string(),
         ".svn".to_string(),
-        ".venv".to_string(),
+        ".hg".to_string(),
+        ".bzr".to_string(),
         ".vs".to_string(),
         ".vscode".to_string(),
-        "__pycache__".to_string(),
-        "build".to_string(),
-        "dist".to_string(),
+        ".idea".to_string(),
         "node_modules".to_string(),
-        "out".to_string(),
         "target".to_string(),
+        "dist".to_string(),
+        "build".to_string(),
+        "out".to_string(),
+        "bin".to_string(),
+        "obj".to_string(),
+        "__pycache__".to_string(),
+        ".pytest_cache".to_string(),
+        ".mypy_cache".to_string(),
         "venv".to_string(),
-
+        ".venv".to_string(),
+        "env".to_string(),
+        ".env".to_string(),
+        "coverage".to_string(),
+        ".coverage".to_string(),
+        "*.pyc".to_string(),
+        "*.pyo".to_string(),
+        "*.log".to_string(),
         ".DS_Store".to_string(),
         "Thumbs.db".to_string(),
         "*.7z".to_string(),
-        "*.a".to_string(),
-        "*.aac".to_string(),
         "*.avi".to_string(),
+        "*.bin".to_string(),
         "*.bmp".to_string(),
         "*.bz2".to_string(),
-        "*.cache".to_string(),
         "*.class".to_string(),
         "*.db".to_string(),
         "*.dll".to_string(),
         "*.doc".to_string(),
         "*.docx".to_string(),
         "*.dylib".to_string(),
-        "*.egg-info".to_string(),
-        "*.env".to_string(),
-        "*.eot".to_string(),
         "*.exe".to_string(),
         "*.flac".to_string(),
         "*.flv".to_string(),
@@ -192,6 +196,11 @@ impl Options {
         self.include.push(filter);
         let _ = self.save();
         true
+    }
+
+    pub fn clear_includes(&mut self) {
+        self.include.clear();
+        let _ = self.save();
     }
 
     pub fn is_equal(&self, other: &Self) -> bool {

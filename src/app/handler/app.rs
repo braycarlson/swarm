@@ -17,6 +17,7 @@ pub fn handle(model: &mut Model, ui: &mut UiState, msg: App) -> Cmd {
         App::AboutOpened => handle_about_opened(ui),
         App::AboutClosed => handle_about_closed(ui),
         App::Tick => Cmd::None,
+        App::OpenInExplorer => handle_open_in_explorer(model),
     }
 }
 
@@ -109,5 +110,36 @@ fn handle_about_opened(ui: &mut UiState) -> Cmd {
 
 fn handle_about_closed(ui: &mut UiState) -> Cmd {
     ui.show_about = false;
+    Cmd::None
+}
+
+fn handle_open_in_explorer(model: &Model) -> Cmd {
+    if model.tree.nodes.is_empty() {
+        return Cmd::None;
+    }
+
+    let path = &model.tree.nodes[0].path;
+
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer")
+            .arg(path)
+            .spawn();
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg(path)
+            .spawn();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn();
+    }
+
     Cmd::None
 }

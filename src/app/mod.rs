@@ -1,5 +1,6 @@
 pub mod dispatcher;
 pub mod handler;
+pub mod ipc;
 pub mod message;
 pub mod runtime;
 pub mod state;
@@ -13,6 +14,7 @@ use crate::services::worker::BackgroundLoadResult;
 use crate::ui::view::View;
 
 use dispatcher::Dispatcher;
+use ipc::IpcListener;
 use message::{App, CmdBuilder, Msg, Tree};
 use runtime::Runtime;
 use state::{Model, UiState};
@@ -38,32 +40,7 @@ impl SwarmApp {
         let runtime = Runtime::new(msg_sender.clone());
 
         let ipc_thread = if instance_guard.is_some() {
-            let ipc_sender = msg_sender.clone();
-
-            Some(std::thread::spawn(move || {
-                use std::net::TcpListener;
-                use std::io::Read;
-
-                if let Ok(listener) = TcpListener::bind("127.0.0.1:44287") {
-                    for stream in listener.incoming().flatten() {
-                        let mut stream = stream;
-                        let mut buffer = String::new();
-
-                        if stream.read_to_string(&mut buffer).is_ok() {
-                            let paths: Vec<std::path::PathBuf> = buffer
-                                .lines()
-                                .map(std::path::PathBuf::from)
-                                .collect();
-
-                            if !paths.is_empty() {
-                                let _ = ipc_sender.send(Msg::App(
-                                    App::PathsReceivedFromIpc(paths)
-                                ));
-                            }
-                        }
-                    }
-                }
-            }))
+            IpcListener::new(msg_sender.clone()).spawn()
         } else {
             None
         };

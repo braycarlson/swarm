@@ -2,8 +2,18 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use super::command::TaskCommand;
-use super::result::TaskResult;
+pub enum TaskCommand<T, R> {
+    Cancel(String),
+    Execute(String, T, Box<dyn FnOnce(T) -> Result<R, String> + Send + 'static>),
+}
+
+pub enum TaskResult<R> {
+    Completed(String, R),
+    Error(String, String),
+    Started(String),
+}
+
+pub type TaskEvent<R> = TaskResult<R>;
 
 pub struct TaskExecutor<T, R>
 where
@@ -18,7 +28,7 @@ impl<T, R> Default for TaskExecutor<T, R>
 where
     T: Send + 'static,
     R: Send + Clone + 'static,
- {
+{
     fn default() -> Self {
         Self::new()
     }

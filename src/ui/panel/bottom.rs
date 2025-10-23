@@ -2,7 +2,7 @@ use std::sync::mpsc::Sender;
 
 use eframe::egui;
 
-use crate::app::message::{Copy, Msg, TreeGen};
+use crate::app::message::{Copy, Msg, Render};
 use crate::app::state::{LoadStatus, Model, UiState};
 
 pub fn render(
@@ -50,12 +50,22 @@ pub fn render(
                         can_generate_tree,
                         egui::Button::new(tree_label).min_size(egui::vec2(150.0, row_height + padding))
                     ).clicked() {
-                        let _ = sender.send(Msg::TreeGen(TreeGen::Requested));
+                        let _ = sender.send(Msg::Render(Render::Requested));
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(10.0);
-                        render_tree_loading_status(ui, model);
+
+                        if matches!(model.tree.load_status, LoadStatus::Loading { .. }) {
+                            ui.spinner();
+
+                            if let LoadStatus::Loading { message, .. } = &model.tree.load_status {
+                                ui.label(
+                                    egui::RichText::new(message)
+                                        .color(ui.visuals().weak_text_color())
+                                );
+                            }
+                        }
 
                         if !tree_is_loading && model.tree.file_count > 0 {
                             ui.label(
@@ -69,17 +79,4 @@ pub fn render(
                 ui.add_space(8.0);
             });
         });
-}
-
-fn render_tree_loading_status(ui: &mut egui::Ui, model: &Model) {
-    if matches!(model.tree.load_status, LoadStatus::Loading { .. }) {
-        ui.spinner();
-
-        if let LoadStatus::Loading { message, .. } = &model.tree.load_status {
-            ui.label(
-                egui::RichText::new(message)
-                    .color(ui.visuals().weak_text_color())
-            );
-        }
-    }
 }

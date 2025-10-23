@@ -5,14 +5,14 @@ use std::thread;
 
 use copypasta::{ClipboardContext, ClipboardProvider};
 
-use crate::app::message::{Cmd, Copy, Msg, TreeGen};
+use crate::app::message::{Cmd, Copy, Msg, Render};
 use crate::app::state::{SessionData, SessionsModel};
 use crate::constants::APP_NAME;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::services::filesystem::gather::GatherService;
 use crate::services::tree::generator::TreeGenerator;
-use crate::services::tree::operations::TreeOperations;
+use crate::services::tree::traversal::Traversable;
 use crate::services::worker::session::{SessionLoadResult, SessionLoader};
 use crate::services::worker::tree::{TreeLoadResult, TreeLoader};
 
@@ -83,8 +83,8 @@ impl Runtime {
                 self.execute_gather(paths, options);
             }
 
-            Cmd::GenerateTree { nodes, options } => {
-                self.execute_tree_gen(nodes, options);
+            Cmd::RenderTree { nodes, options } => {
+                self.execute_tree_render(nodes, options);
             }
 
             Cmd::SaveSessions => {
@@ -225,10 +225,10 @@ impl Runtime {
         });
     }
 
-    fn execute_tree_gen(&mut self, nodes: Vec<FileNode>, options: Arc<Options>) {
+    fn execute_tree_render(&mut self, nodes: Vec<FileNode>, options: Arc<Options>) {
         let sender = self.msg_sender.clone();
 
-        sender.send(Msg::TreeGen(TreeGen::Started)).ok();
+        sender.send(Msg::Render(Render::Started)).ok();
 
         let (tx, rx) = mpsc::channel();
         self.tree_gen_tx = Some(tx);
@@ -247,7 +247,7 @@ impl Runtime {
                 let _ = clipboard.set_contents(output.clone());
             }
 
-            let _ = sender.send(Msg::TreeGen(TreeGen::Generated(output)));
+            let _ = sender.send(Msg::Render(Render::Generated(output)));
         });
     }
 

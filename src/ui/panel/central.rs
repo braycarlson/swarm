@@ -4,7 +4,7 @@ use eframe::egui;
 
 use crate::app::message::{Msg, Search, Tree};
 use crate::app::state::{Model, UiState};
-use crate::services::tree::operations::should_show_node;
+use crate::services::tree::traversal::should_show_node;
 use crate::model::node::{FileNode, NodeKind};
 
 pub fn render(

@@ -35,9 +35,7 @@ fn handle_include_filter_removed(model: &mut Model, index: usize) -> Cmd {
 
 fn handle_include_filters_cleared(model: &mut Model) -> Cmd {
     let mut new_options = (*model.options).clone();
-    new_options.include.clear();
-
-    let _ = new_options.save();
+    new_options.clear_includes();
     model.update_options(new_options);
 
     Cmd::None

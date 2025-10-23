@@ -11,7 +11,7 @@ impl Dispatcher {
             Msg::Tree(msg) => handler::tree::handle(model, ui, msg),
             Msg::Search(msg) => handler::search::handle(model, msg),
             Msg::Copy(msg) => handler::copy::handle(model, ui, msg),
-            Msg::TreeGen(msg) => handler::generator::handle(model, ui, msg),
+            Msg::Render(msg) => handler::render::handle(model, ui, msg),
             Msg::Options(msg) => handler::options::handle(model, ui, msg),
             Msg::Filter(msg) => handler::filter::handle(model, ui, msg),
             Msg::App(msg) => handler::app::handle(model, ui, msg),
