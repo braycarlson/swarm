@@ -15,9 +15,9 @@ use crate::ui::view::View;
 
 use dispatcher::Dispatcher;
 use ipc::IpcListener;
-use message::{App, CmdBuilder, Msg, Tree};
+use message::{App, CmdBuilder, Msg, Search, Tree};
 use runtime::Runtime;
-use state::{Model, UiState};
+use state::{FilterStatus, Model, UiState};
 
 pub struct SwarmApp {
     model: Model,
@@ -81,6 +81,10 @@ impl SwarmApp {
             }
         }
 
+        if self.ui.search_debounce.is_some() {
+            messages.push(Msg::Search(Search::DebounceTick));
+        }
+
         for msg in messages {
             let cmd = Dispatcher::dispatch(&mut self.model, &mut self.ui, msg);
             self.runtime.execute(cmd);
@@ -110,6 +114,8 @@ impl eframe::App for SwarmApp {
                 self.model.sessions.sessions.insert(session_id.clone(), session);
                 self.model.sessions.active_id = Some(session_id.clone());
 
+                self.model.refresh_git_status();
+
                 self.model.background_loader.start_loading(
                     self.model.tree.nodes.clone(),
                     (*self.model.options).clone()
@@ -119,6 +125,9 @@ impl eframe::App for SwarmApp {
                 let cmd = builder.build();
 
                 self.runtime.execute(cmd);
+            } else if self.model.sessions.active_id.is_some() {
+                self.model.refresh_git_status();
+                self.dispatch(Msg::App(App::Initialized));
             } else {
                 self.dispatch(Msg::App(App::Initialized));
             }
@@ -136,6 +145,8 @@ impl eframe::App for SwarmApp {
         ) || self.ui.copy_in_progress
           || self.ui.tree_gen_in_progress
           || self.model.background_loader.is_running()
+          || self.ui.search_debounce.is_some()
+          || self.ui.filter_status == FilterStatus::Filtering
         {
             ctx.request_repaint();
         }

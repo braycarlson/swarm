@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::model::node::FileNode;
+use crate::services::filesystem::git::GitService;
 
 use super::SearchModel;
 
@@ -65,18 +66,26 @@ impl TreeModel {
     }
 
     pub fn gather_checked_paths(&self, search: &SearchModel) -> Vec<String> {
+        self.gather_checked_paths_with_git(search, None)
+    }
+
+    pub fn gather_checked_paths_with_git(&self, search: &SearchModel, git: Option<&GitService>) -> Vec<String> {
         let mut results = Vec::new();
-        let query = if search.has_query() { &search.query } else { "" };
+        let query = search.parsed();
 
         for node in &self.nodes {
-            node.gather_checked_paths_recursive(&mut results, query);
+            node.gather_checked_paths_with_git(&mut results, &query, git);
         }
         results
     }
 
     pub fn create_filtered_tree(&self, search: &SearchModel) -> Vec<FileNode> {
-        let query = if search.has_query() { &search.query } else { "" };
-        self.nodes.iter().filter_map(|n| n.filter_selected(query)).collect()
+        self.create_filtered_tree_with_git(search, None)
+    }
+
+    pub fn create_filtered_tree_with_git(&self, search: &SearchModel, git: Option<&GitService>) -> Vec<FileNode> {
+        let query = search.parsed();
+        self.nodes.iter().filter_map(|n| n.filter_selected_with_git(&query, git)).collect()
     }
 
     pub fn update_file_count(&mut self) {

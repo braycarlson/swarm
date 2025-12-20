@@ -9,7 +9,7 @@ impl Dispatcher {
         match msg {
             Msg::Session(msg) => handler::session::handle(model, ui, msg),
             Msg::Tree(msg) => handler::tree::handle(model, ui, msg),
-            Msg::Search(msg) => handler::search::handle(model, msg),
+            Msg::Search(msg) => handler::search::handle(model, ui, msg),
             Msg::Copy(msg) => handler::copy::handle(model, ui, msg),
             Msg::Render(msg) => handler::render::handle(model, ui, msg),
             Msg::Options(msg) => handler::options::handle(model, ui, msg),

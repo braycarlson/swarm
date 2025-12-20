@@ -63,6 +63,8 @@ fn handle_path_selected(model: &mut Model, ui: &mut UiState, path: PathBuf) -> C
         progress: (0, 0),
     };
 
+    model.git.refresh(&path);
+
     cmd_builder = cmd_builder.add(Cmd::LoadSession {
         path,
         options: Arc::clone(&model.options),
@@ -92,6 +94,10 @@ fn handle_paths_from_ipc(model: &mut Model, _ui: &mut UiState, paths: Vec<PathBu
         message: format!("Loading {} paths", path_count),
         progress: (0, path_count),
     };
+
+    if let Some(first_path) = paths.first() {
+        model.git.refresh(first_path);
+    }
 
     for path in paths.into_iter().take(MAX_IPC_PATHS as usize) {
         cmd_builder = cmd_builder.add(Cmd::LoadSession {

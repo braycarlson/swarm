@@ -37,6 +37,8 @@ fn handle_session_selected(model: &mut Model, _ui: &mut UiState, id: String) -> 
         model.tree = session.tree_state.clone();
         model.search = session.search_state.clone();
 
+        model.refresh_git_status();
+
         let builder = CmdBuilder::new();
         builder.build()
     } else {
@@ -49,6 +51,8 @@ fn handle_session_deleted(model: &mut Model, id: String) -> Cmd {
         if let Some(session) = model.sessions.sessions.get(&new_active_id) {
             model.tree = session.tree_state.clone();
             model.search = session.search_state.clone();
+
+            model.refresh_git_status();
 
             let builder = CmdBuilder::new()
                 .add(Cmd::DeleteSessionData(id));

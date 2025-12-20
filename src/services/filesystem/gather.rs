@@ -4,11 +4,13 @@ use std::sync::Arc;
 
 use ignore::WalkBuilder;
 
+use crate::app::state::search::{Command, ParsedQuery};
 use crate::model::error::{SwarmError, SwarmResult};
 use crate::model::options::Options;
 use crate::model::path::PathExtensions;
 
 use super::filter::{GlobPathFilter, PathFilter};
+use super::git::GitService;
 
 #[derive(Clone)]
 pub struct GatherService;
@@ -19,8 +21,20 @@ impl GatherService {
     }
 
     pub fn gather(&self, paths: &[String], options: &Options) -> SwarmResult<(String, usize)> {
+        self.gather_with_context(paths, options, None, None)
+    }
+
+    pub fn gather_with_context(
+        &self,
+        paths: &[String],
+        options: &Options,
+        git_service: Option<&GitService>,
+        query: Option<&ParsedQuery>,
+    ) -> SwarmResult<(String, usize)> {
         let filter: Arc<dyn PathFilter> = Arc::new(GlobPathFilter::from_options(options)?);
         let mut files = Vec::new();
+
+        let include_diff = query.is_some_and(|q| q.has_command(Command::Diff));
 
         for path_str in paths {
             let path = Path::new(path_str.trim());
@@ -31,28 +45,62 @@ impl GatherService {
             }
 
             if clean_path.is_file() {
-                Self::collect_file(&clean_path, &mut files);
+                Self::collect_file(&clean_path, &mut files, git_service, include_diff);
             } else if clean_path.is_dir() {
-                Self::collect_directory(&clean_path, &mut files, &filter)?;
+                Self::collect_directory(&clean_path, &mut files, &filter, git_service, include_diff)?;
             }
         }
 
-        let output = options.output_format.format(&files)?;
+        let output_format = query
+            .and_then(|q| q.format_override)
+            .unwrap_or(options.output_format);
+
+        let output = output_format.format(&files)?;
         let total_lines: usize = output.lines().count();
 
         Ok((output, total_lines))
     }
 
-    fn collect_file(path: &Path, files: &mut Vec<(String, String)>) {
-        if let Ok(content) = fs::read_to_string(path) {
-            files.push((path.display().to_string(), content));
+    fn collect_file(
+        path: &Path,
+        files: &mut Vec<(String, String)>,
+        git_service: Option<&GitService>,
+        include_diff: bool,
+    ) {
+        let current_content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        if include_diff {
+            if let Some(git) = git_service {
+                let status = git.get_status(path);
+
+                if status.has_diff() {
+                    if let Some(original) = git.get_original_content(path) {
+                        files.push((
+                            format!("{} (original)", path.display()),
+                            original,
+                        ));
+                        files.push((
+                            format!("{} (modified)", path.display()),
+                            current_content,
+                        ));
+                        return;
+                    }
+                }
+            }
         }
+
+        files.push((path.display().to_string(), current_content));
     }
 
     fn collect_directory(
         directory: &Path,
         files: &mut Vec<(String, String)>,
         filter: &Arc<dyn PathFilter>,
+        git_service: Option<&GitService>,
+        include_diff: bool,
     ) -> SwarmResult<()> {
         let walker = Self::create_walker(directory, filter);
 
@@ -63,7 +111,7 @@ impl GatherService {
 
             if entry.file_type().is_some_and(|file_type| file_type.is_file())
                 && filter.should_include(entry.path()) {
-                    Self::collect_file(entry.path(), files);
+                    Self::collect_file(entry.path(), files, git_service, include_diff);
                 }
         }
 

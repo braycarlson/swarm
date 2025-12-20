@@ -1,10 +1,13 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::app::state::search::ParsedQuery;
 use crate::app::state::OptionsTab;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::model::output::OutputFormat;
+use crate::services::filesystem::git::GitService;
 use crate::ui::themes::Theme;
 
 #[derive(Debug)]
@@ -50,6 +53,11 @@ pub enum Search {
     QueryChanged(String),
     Activated,
     Cleared,
+    DebounceTick,
+    FilterStarted,
+    FilterProgress(usize, usize),
+    FilterComplete(HashSet<PathBuf>),
+    FilterCancelled,
 }
 
 #[derive(Debug, Clone)]
@@ -104,11 +112,10 @@ pub enum App {
     OpenInExplorer
 }
 
-#[derive(Debug)]
 pub enum Cmd {
     LoadSession { path: PathBuf, options: Arc<Options> },
     RefreshTree { nodes: Vec<FileNode>, options: Arc<Options> },
-    GatherFiles { paths: Vec<String>, options: Arc<Options> },
+    GatherFiles { paths: Vec<String>, options: Arc<Options>, git: GitService, query: ParsedQuery },
     RenderTree { nodes: Vec<FileNode>, options: Arc<Options> },
     SaveSessions,
     DeleteSessionData(String),
@@ -118,6 +125,12 @@ pub enum Cmd {
         checked: bool,
         options: Arc<Options>,
     },
+    StartExpensiveFilter {
+        nodes: Vec<FileNode>,
+        query: ParsedQuery,
+        git: GitService,
+    },
+    CancelFilter,
     Batch(Vec<Cmd>),
     None,
 }

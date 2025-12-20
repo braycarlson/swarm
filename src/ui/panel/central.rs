@@ -3,14 +3,15 @@ use std::sync::mpsc::Sender;
 use eframe::egui;
 
 use crate::app::message::{Msg, Search, Tree};
-use crate::app::state::{Model, UiState};
-use crate::services::tree::traversal::should_show_node;
+use crate::app::state::{FilterStatus, Model, UiState};
 use crate::model::node::{FileNode, NodeKind};
+use crate::services::filesystem::git::GitService;
+use crate::services::tree::traversal::should_show_node_at_depth;
 
 pub fn render(
     ctx: &egui::Context,
     model: &Model,
-    _ui_state: &UiState,
+    ui_state: &UiState,
     sender: &Sender<Msg>,
 ) {
     egui::CentralPanel::default()
@@ -19,7 +20,7 @@ pub fn render(
                 .inner_margin(egui::Margin::symmetric(18, 18))
         )
         .show(ctx, |ui| {
-            render_search_bar(ui, model, sender);
+            render_search_bar(ui, model, ui_state, sender);
             ui.add_space(5.0);
 
             let tree_frame = egui::Frame::new()
@@ -29,11 +30,30 @@ pub fn render(
                 .corner_radius(4.0);
 
             tree_frame.show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        render_tree_nodes(ui, &model.tree.nodes, &model.search.query, sender);
-                    });
+                let available_size = ui.available_size();
+                ui.set_min_size(available_size);
+
+                if ui_state.filter_status == FilterStatus::Filtering {
+                    ui.allocate_ui_with_layout(
+                        available_size,
+                        egui::Layout::top_down(egui::Align::Center),
+                        |ui| {
+                            let content_height = 50.0;
+                            let space_above = (available_size.y - content_height) / 2.0;
+                            ui.add_space(space_above.max(0.0));
+
+                            ui.spinner();
+                            ui.add_space(8.0);
+                            ui.label("Searching files...");
+                        }
+                    );
+                } else {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            render_tree_nodes(ui, &model.tree.nodes, model, &model.git, sender);
+                        });
+                }
             });
         });
 }
@@ -41,6 +61,7 @@ pub fn render(
 fn render_search_bar(
     ui: &mut egui::Ui,
     model: &Model,
+    ui_state: &UiState,
     sender: &Sender<Msg>,
 ) {
     let reload_width = 85.0;
@@ -67,17 +88,26 @@ fn render_search_bar(
                     ui.horizontal(|ui| {
                         ui.add_space(4.0);
 
+                        let icon = if ui_state.filter_status == FilterStatus::Filtering {
+                            "⏳"
+                        } else {
+                            "🔍"
+                        };
+
                         ui.add_sized(
                             [row_height, row_height],
                             egui::Label::new(
-                                egui::RichText::new("🔍")
+                                egui::RichText::new(icon)
                                     .color(ui.visuals().weak_text_color())
                             )
                         );
 
                         ui.add_space(4.0);
 
-                        let mut query = model.search.query.clone();
+                        let display_query = ui_state.search_pending.as_ref()
+                            .unwrap_or(&model.search.query);
+
+                        let mut query = display_query.clone();
                         let text_width = ui.available_width() - (row_height + row_height) + 5.0;
 
                         let response = ui.add_sized(
@@ -100,7 +130,10 @@ fn render_search_bar(
                                 .stroke(egui::Stroke::NONE)
                         ).on_hover_cursor(egui::CursorIcon::PointingHand);
 
-                        if !model.search.query.is_empty() && clear.clicked() {
+                        let current_query = ui_state.search_pending.as_ref()
+                            .unwrap_or(&model.search.query);
+
+                        if !current_query.is_empty() && clear.clicked() {
                             let _ = sender.send(Msg::Search(Search::Cleared));
                         }
                     });
@@ -120,11 +153,14 @@ fn render_search_bar(
 fn render_tree_nodes(
     ui: &mut egui::Ui,
     nodes: &[FileNode],
-    search_query: &str,
+    model: &Model,
+    git: &GitService,
     sender: &Sender<Msg>,
 ) {
+    let query = model.search.parsed();
+
     for (i, node) in nodes.iter().enumerate() {
-        render_node(ui, node, vec![i], 0, search_query, sender);
+        render_node(ui, node, vec![i], 0, model, git, sender, &query);
     }
 }
 
@@ -133,10 +169,12 @@ fn render_node(
     node: &FileNode,
     path: Vec<usize>,
     depth: usize,
-    search_query: &str,
+    model: &Model,
+    git: &GitService,
     sender: &Sender<Msg>,
+    query: &crate::app::state::search::ParsedQuery,
 ) {
-    if !should_show_node(node, search_query) {
+    if !should_show_node_at_depth(node, &model.search, Some(git), depth, query) {
         return;
     }
 
@@ -174,7 +212,7 @@ fn render_node(
                     })).ok();
                 }
 
-                let default_open = depth == 0 || !search_query.is_empty();
+                let default_open = depth == 0;
 
                 let header = egui::CollapsingHeader::new(&label)
                     .id_salt(&node.path)
@@ -189,7 +227,7 @@ fn render_node(
                         for (i, child) in node.children.iter().enumerate() {
                             let mut child_path = path.clone();
                             child_path.push(i);
-                            render_node(ui, child, child_path, depth + 1, search_query, sender);
+                            render_node(ui, child, child_path, depth + 1, model, git, sender, query);
                         }
                     }
                 });

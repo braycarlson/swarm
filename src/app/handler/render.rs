@@ -17,7 +17,9 @@ fn handle_render_requested(model: &mut Model, ui: &mut UiState) -> Cmd {
         return Cmd::None;
     }
 
-    let filtered = model.tree.create_filtered_tree(&model.search);
+    model.refresh_git_status();
+
+    let filtered = model.tree.create_filtered_tree_with_git(&model.search, Some(&model.git));
 
     if filtered.is_empty() {
         return Cmd::None;

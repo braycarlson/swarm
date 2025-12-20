@@ -129,7 +129,7 @@ pub fn apply_style(ctx: &egui::Context) {
     style.spacing.window_margin = egui::Margin::same(10);
     style.spacing.menu_margin = egui::Margin::same(8);
 
-    style.spacing.indent = 20.0;
+    style.spacing.indent = 0.0;
 
     ctx.set_style(style);
 }

@@ -144,6 +144,8 @@ fn handle_tree_loaded(model: &mut Model, _ui: &mut UiState, nodes: Vec<FileNode>
     model.tree.load_status = LoadStatus::Loaded;
     model.tree.update_file_count();
 
+    model.refresh_git_status();
+
     sync_to_active_session(model);
 
     model.background_loader.start_loading(nodes, (*model.options).clone());

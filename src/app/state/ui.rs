@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::ui::themes::Theme;
 use crate::ui::widget::toast::ToastSystem;
 
@@ -7,6 +9,14 @@ pub enum OptionsTab {
     #[default]
     General,
     Includes,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum FilterStatus {
+    #[default]
+    Idle,
+    Filtering,
+    Complete,
 }
 
 #[derive(Default)]
@@ -34,17 +44,20 @@ impl OptionsState {
 
 #[derive(Clone)]
 pub struct UiState {
-    pub theme: Theme,
-    pub should_focus: bool,
-    pub show_options: bool,
-    pub show_about: bool,
-    pub editing_session: Option<String>,
-    pub edit_name: String,
-    pub options_tab: OptionsTab,
-    pub new_include_filter: String,
-    pub new_exclude_filter: String,
-    pub file_dialog_pending: bool,
     pub copy_in_progress: bool,
+    pub edit_name: String,
+    pub editing_session: Option<String>,
+    pub file_dialog_pending: bool,
+    pub filter_status: FilterStatus,
+    pub new_exclude_filter: String,
+    pub new_include_filter: String,
+    pub options_tab: OptionsTab,
+    pub search_debounce: Option<Instant>,
+    pub search_pending: Option<String>,
+    pub should_focus: bool,
+    pub show_about: bool,
+    pub show_options: bool,
+    pub theme: Theme,
     pub toast: ToastSystem,
     pub tree_gen_in_progress: bool,
 }
@@ -52,17 +65,20 @@ pub struct UiState {
 impl UiState {
     pub fn new(theme: Theme) -> Self {
         Self {
-            theme,
-            should_focus: false,
-            show_options: false,
-            show_about: false,
-            editing_session: None,
-            edit_name: String::new(),
-            options_tab: OptionsTab::default(),
-            new_include_filter: String::new(),
-            new_exclude_filter: String::new(),
-            file_dialog_pending: false,
             copy_in_progress: false,
+            edit_name: String::new(),
+            editing_session: None,
+            file_dialog_pending: false,
+            filter_status: FilterStatus::Idle,
+            new_exclude_filter: String::new(),
+            new_include_filter: String::new(),
+            options_tab: OptionsTab::default(),
+            search_debounce: None,
+            search_pending: None,
+            should_focus: false,
+            show_about: false,
+            show_options: false,
+            theme,
             toast: ToastSystem::new(),
             tree_gen_in_progress: false,
         }
@@ -76,5 +92,21 @@ impl UiState {
     pub fn cancel_session_edit(&mut self) {
         self.editing_session = None;
         self.edit_name.clear();
+    }
+
+    pub fn set_search_pending(&mut self, query: String) {
+        self.search_pending = Some(query);
+        self.search_debounce = Some(Instant::now());
+    }
+
+    pub fn take_debounced_search(&mut self, debounce_ms: u64) -> Option<String> {
+        if let Some(instant) = self.search_debounce {
+            if instant.elapsed().as_millis() >= debounce_ms as u128 {
+                self.search_debounce = None;
+                return self.search_pending.take();
+            }
+        }
+
+        None
     }
 }

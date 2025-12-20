@@ -5,20 +5,24 @@ use std::thread;
 
 use copypasta::{ClipboardContext, ClipboardProvider};
 
-use crate::app::message::{Cmd, Copy, Msg, Render};
+use crate::app::message::{Cmd, Copy, Msg, Render, Search};
 use crate::app::state::{SessionData, SessionsModel};
 use crate::constants::APP_NAME;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::services::filesystem::gather::GatherService;
+use crate::services::filesystem::git::GitService;
+use crate::app::state::search::ParsedQuery;
 use crate::services::tree::generator::TreeGenerator;
 use crate::services::tree::traversal::Traversable;
+use crate::services::worker::filter::{FilterResult, FilterWorker};
 use crate::services::worker::session::{SessionLoadResult, SessionLoader};
 use crate::services::worker::tree::{TreeLoadResult, TreeLoader};
 
 const MAX_MESSAGES_PER_POLL: u32 = 20;
 
 pub struct Runtime {
+    filter_worker: FilterWorker,
     gather_service: GatherService,
     gather_tx: Option<Sender<()>>,
     msg_sender: Sender<Msg>,
@@ -30,6 +34,7 @@ pub struct Runtime {
 impl Runtime {
     pub fn new(msg_sender: Sender<Msg>) -> Self {
         Self {
+            filter_worker: FilterWorker::new(),
             gather_service: GatherService::new(),
             gather_tx: None,
             msg_sender: msg_sender.clone(),
@@ -79,8 +84,8 @@ impl Runtime {
                 self.tree_loader.start_load(refreshed, (*options).clone());
             }
 
-            Cmd::GatherFiles { paths, options } => {
-                self.execute_gather(paths, options);
+            Cmd::GatherFiles { paths, options, git, query } => {
+                self.execute_gather(paths, options, git, query);
             }
 
             Cmd::RenderTree { nodes, options } => {
@@ -96,6 +101,14 @@ impl Runtime {
 
             Cmd::PropagateCheckedWithLoad { nodes, path, checked, options } => {
                 self.execute_propagate_with_load(nodes, path, checked, options);
+            }
+
+            Cmd::StartExpensiveFilter { nodes, query, git } => {
+                self.filter_worker.start_filter(nodes, query, git);
+            }
+
+            Cmd::CancelFilter => {
+                self.filter_worker.cancel();
             }
 
             Cmd::Batch(cmds) => {
@@ -116,6 +129,9 @@ impl Runtime {
 
         let tree_messages = self.poll_tree_loader();
         all_messages.extend(tree_messages);
+
+        let filter_messages = self.poll_filter_worker();
+        all_messages.extend(filter_messages);
 
         all_messages
     }
@@ -193,7 +209,24 @@ impl Runtime {
         messages
     }
 
-    fn execute_gather(&mut self, paths: Vec<String>, options: Arc<Options>) {
+    fn poll_filter_worker(&mut self) -> Vec<Msg> {
+        let mut messages = Vec::new();
+
+        while let Some(result) = self.filter_worker.check_results() {
+            let msg = match result {
+                FilterResult::Started => Msg::Search(Search::FilterStarted),
+                FilterResult::Progress(current, total) => Msg::Search(Search::FilterProgress(current, total)),
+                FilterResult::Complete(matching) => Msg::Search(Search::FilterComplete(matching)),
+                FilterResult::Cancelled => Msg::Search(Search::FilterCancelled),
+            };
+
+            messages.push(msg);
+        }
+
+        messages
+    }
+
+    fn execute_gather(&mut self, paths: Vec<String>, options: Arc<Options>, git: GitService, query: ParsedQuery) {
         let gather = self.gather_service.clone();
         let sender = self.msg_sender.clone();
 
@@ -209,7 +242,7 @@ impl Runtime {
                 return;
             }
 
-            match gather.gather(&paths, &options) {
+            match gather.gather_with_context(&paths, &options, Some(&git), Some(&query)) {
                 Ok((output, line_count)) => {
                     if let Ok(mut clipboard) = ClipboardContext::new() {
                         let _ = clipboard.set_contents(output.clone());

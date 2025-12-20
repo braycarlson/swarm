@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
+use crate::app::state::search::FileMetadata;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::services::tree::traversal::Traversable;
@@ -37,7 +38,11 @@ impl BackgroundLoadTask {
         total: usize,
     ) {
         for node in nodes {
-            if !node.is_directory() {
+            if node.is_file() {
+                if node.metadata.is_none() {
+                    node.metadata = FileMetadata::from_path_with_lines(&node.path);
+                }
+
                 continue;
             }
 

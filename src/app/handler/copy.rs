@@ -21,7 +21,9 @@ fn handle_copy_requested(model: &mut Model, ui: &mut UiState) -> Cmd {
         node.expand_all_checked(&model.options);
     }
 
-    let paths = model.tree.gather_checked_paths(&model.search);
+    model.refresh_git_status();
+
+    let paths = model.tree.gather_checked_paths_with_git(&model.search, Some(&model.git));
 
     if paths.is_empty() {
         return Cmd::None;
@@ -30,9 +32,13 @@ fn handle_copy_requested(model: &mut Model, ui: &mut UiState) -> Cmd {
     ui.copy_in_progress = true;
     model.tree.output.clear();
 
+    let query = model.search.parsed();
+
     Cmd::GatherFiles {
         paths,
         options: Arc::clone(&model.options),
+        git: model.git.clone(),
+        query,
     }
 }
 
