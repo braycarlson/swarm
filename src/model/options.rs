@@ -29,6 +29,9 @@ pub struct Options {
     pub theme: Theme,
 
     #[serde(default)]
+    pub ui_scale: Option<f32>,
+
+    #[serde(default)]
     pub use_icon: bool,
 }
 
@@ -133,6 +136,145 @@ fn default_single_instance() -> bool {
     true
 }
 
+pub fn calculate_default_ui_scale() -> f32 {
+    if let Some(scale) = detect_screen_scale() {
+        return scale;
+    }
+
+    1.3
+}
+
+pub fn calculate_ui_scale_for_position(x: f32, y: f32) -> f32 {
+    if let Some(scale) = detect_screen_scale_at_position(x as i32, y as i32) {
+        return scale;
+    }
+
+    calculate_default_ui_scale()
+}
+
+fn detect_screen_scale() -> Option<f32> {
+    #[cfg(target_os = "windows")]
+    {
+        use winapi::um::winuser::{GetSystemMetrics, SM_CYSCREEN};
+
+        let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+
+        if height > 0 {
+            return Some(scale_for_height(height as u32));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use core_graphics::display::CGDisplay;
+
+        let display = CGDisplay::main();
+        let height = display.pixels_high() as u32;
+
+        if height > 0 {
+            return Some(scale_for_height(height));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(output) = std::process::Command::new("xrandr")
+            .arg("--current")
+            .output()
+        {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            for line in stdout.lines() {
+                if line.contains('*') {
+                    if let Some(resolution) = line.split_whitespace().next() {
+                        if let Some(height_str) = resolution.split('x').nth(1) {
+                            if let Ok(height) = height_str.parse::<u32>() {
+                                return Some(scale_for_height(height));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn detect_screen_scale_at_position(x: i32, y: i32) -> Option<f32> {
+    #[cfg(target_os = "windows")]
+    {
+        use winapi::shared::windef::{HMONITOR, POINT, RECT};
+        use winapi::um::winuser::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+
+        let point = POINT { x, y };
+        let monitor: HMONITOR = unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST) };
+
+        if !monitor.is_null() {
+            let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+
+            if unsafe { GetMonitorInfoW(monitor, &mut info) } != 0 {
+                let rect: RECT = info.rcMonitor;
+                let height = (rect.bottom - rect.top) as u32;
+
+                if height > 0 {
+                    return Some(scale_for_height(height));
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use core_graphics::display::CGDisplay;
+
+        let displays = CGDisplay::active_displays().ok()?;
+
+        for display_id in displays {
+            let display = CGDisplay::new(display_id);
+            let bounds = display.bounds();
+
+            let display_x = bounds.origin.x as i32;
+            let display_y = bounds.origin.y as i32;
+            let display_width = bounds.size.width as i32;
+            let display_height = bounds.size.height as i32;
+
+            if x >= display_x
+                && x < display_x + display_width
+                && y >= display_y
+                && y < display_y + display_height
+            {
+                return Some(scale_for_height(display_height as u32));
+            }
+        }
+
+        let main_display = CGDisplay::main();
+        return Some(scale_for_height(main_display.pixels_high() as u32));
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let _ = (x, y);
+    }
+
+    None
+}
+
+fn scale_for_height(height: u32) -> f32 {
+    match height {
+        0..=720 => 1.0,
+        721..=900 => 1.1,
+        901..=1080 => 1.3,
+        1081..=1200 => 1.4,
+        1201..=1440 => 1.6,
+        1441..=1600 => 1.8,
+        1601..=1800 => 2.0,
+        1801..=2160 => 2.2,
+        _ => 2.5,
+    }
+}
+
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -142,6 +284,7 @@ impl Default for Options {
             output_format: OutputFormat::default(),
             single_instance: true,
             theme: Theme::default(),
+            ui_scale: None,
             use_icon: false,
         }
     }
@@ -162,6 +305,12 @@ impl Options {
             options.exclude = default_exclude_patterns();
         }
 
+        if let Some(scale) = options.ui_scale {
+            if scale < 0.5 || scale > 3.0 {
+                options.ui_scale = None;
+            }
+        }
+
         Ok(options)
     }
 
@@ -176,6 +325,14 @@ impl Options {
         fs::write(&path, content)?;
 
         Ok(())
+    }
+
+    pub fn effective_ui_scale(&self) -> f32 {
+        self.ui_scale.unwrap_or_else(calculate_default_ui_scale)
+    }
+
+    pub fn effective_ui_scale_at_position(&self, x: f32, y: f32) -> f32 {
+        self.ui_scale.unwrap_or_else(|| calculate_ui_scale_for_position(x, y))
     }
 
     pub fn add_exclude_filter(&mut self, filter: String) -> bool {
@@ -210,6 +367,7 @@ impl Options {
             && self.output_format == other.output_format
             && self.single_instance == other.single_instance
             && self.theme == other.theme
+            && self.ui_scale == other.ui_scale
             && self.use_icon == other.use_icon
     }
 

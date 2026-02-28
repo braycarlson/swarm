@@ -5,7 +5,7 @@
 #define MyAppName "swarm"
 #define MyAppPublisher "Brayden Carlson"
 #define MyAppURL "https://www.braydencarlson.com/"
-#define MyAppExeName "swarm.exe"
+#define MyAppExeName "swarm-full.exe"
 #define MyAppId "{{AF880013-CB11-4D3F-82E5-38502F92EDA0}"
 
 [Setup]
@@ -33,7 +33,9 @@ PrivilegesRequired=admin
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Files]
-Source: "..\target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\target\release\swarm-full.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\target\release\swarm-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\target\release\swarm-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Registry]
 ; Context menu for directories

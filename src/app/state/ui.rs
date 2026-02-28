@@ -19,7 +19,14 @@ pub enum FilterStatus {
     Complete,
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum GenerateMode {
+    #[default]
+    Tree,
+    Skeleton,
+}
+
+#[derive(Clone, Default)]
 pub struct OptionsState {
     pub active_tab: OptionsTab,
     pub new_exclude: String,
@@ -49,6 +56,7 @@ pub struct UiState {
     pub editing_session: Option<String>,
     pub file_dialog_pending: bool,
     pub filter_status: FilterStatus,
+    pub generate_mode: GenerateMode,
     pub new_exclude_filter: String,
     pub new_include_filter: String,
     pub options_tab: OptionsTab,
@@ -57,6 +65,7 @@ pub struct UiState {
     pub should_focus: bool,
     pub show_about: bool,
     pub show_options: bool,
+    pub skeleton_gen_in_progress: bool,
     pub theme: Theme,
     pub toast: ToastSystem,
     pub tree_gen_in_progress: bool,
@@ -70,6 +79,7 @@ impl UiState {
             editing_session: None,
             file_dialog_pending: false,
             filter_status: FilterStatus::Idle,
+            generate_mode: GenerateMode::default(),
             new_exclude_filter: String::new(),
             new_include_filter: String::new(),
             options_tab: OptionsTab::default(),
@@ -78,6 +88,7 @@ impl UiState {
             should_focus: false,
             show_about: false,
             show_options: false,
+            skeleton_gen_in_progress: false,
             theme,
             toast: ToastSystem::new(),
             tree_gen_in_progress: false,

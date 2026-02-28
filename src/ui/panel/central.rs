@@ -142,7 +142,7 @@ fn render_search_bar(
         );
 
         if ui.add(
-            egui::Button::new("🔄 Reload")
+            egui::Button::new("Reload")
                 .min_size(egui::vec2(reload_width, row_height + padding))
         ).clicked() {
             let _ = sender.send(Msg::Tree(Tree::RefreshRequested));

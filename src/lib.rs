@@ -1,4 +1,5 @@
 pub mod app;
+pub mod cli;
 pub mod constants;
 pub mod context;
 pub mod model;

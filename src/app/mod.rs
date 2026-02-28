@@ -98,7 +98,18 @@ impl eframe::App for SwarmApp {
 
         self.ui.theme.apply(ctx);
 
-        ctx.set_pixels_per_point(1.3);
+        let scale = if self.model.options.ui_scale.is_none() {
+            ctx.input(|i| {
+                i.viewport().outer_rect.map(|rect| {
+                    let center = rect.center();
+                    self.model.options.effective_ui_scale_at_position(center.x, center.y)
+                })
+            }).unwrap_or_else(|| self.model.options.effective_ui_scale())
+        } else {
+            self.model.options.effective_ui_scale()
+        };
+
+        ctx.set_pixels_per_point(scale);
 
         if !self.initialized {
             self.initialized = true;
@@ -144,6 +155,7 @@ impl eframe::App for SwarmApp {
             state::LoadStatus::Loading { .. }
         ) || self.ui.copy_in_progress
           || self.ui.tree_gen_in_progress
+          || self.ui.skeleton_gen_in_progress
           || self.model.background_loader.is_running()
           || self.ui.search_debounce.is_some()
           || self.ui.filter_status == FilterStatus::Filtering

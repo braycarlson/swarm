@@ -5,13 +5,14 @@ use std::thread;
 
 use copypasta::{ClipboardContext, ClipboardProvider};
 
-use crate::app::message::{Cmd, Copy, Msg, Render, Search};
+use crate::app::message::{Cmd, Copy, Msg, Render, Search, Skeleton};
 use crate::app::state::{SessionData, SessionsModel};
 use crate::constants::APP_NAME;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::services::filesystem::gather::GatherService;
 use crate::services::filesystem::git::GitService;
+use crate::services::skeleton::SkeletonGenerator;
 use crate::app::state::search::ParsedQuery;
 use crate::services::tree::generator::TreeGenerator;
 use crate::services::tree::traversal::Traversable;
@@ -27,6 +28,8 @@ pub struct Runtime {
     gather_tx: Option<Sender<()>>,
     msg_sender: Sender<Msg>,
     session_loader: SessionLoader,
+    skeleton_gen_tx: Option<Sender<()>>,
+    skeleton_generator: SkeletonGenerator,
     tree_gen_tx: Option<Sender<()>>,
     tree_loader: TreeLoader,
 }
@@ -39,6 +42,8 @@ impl Runtime {
             gather_tx: None,
             msg_sender: msg_sender.clone(),
             session_loader: SessionLoader::new(),
+            skeleton_gen_tx: None,
+            skeleton_generator: SkeletonGenerator::new(),
             tree_gen_tx: None,
             tree_loader: TreeLoader::new(),
         }
@@ -92,6 +97,10 @@ impl Runtime {
                 self.execute_tree_render(nodes, options);
             }
 
+            Cmd::GenerateSkeleton { paths, options } => {
+                self.execute_skeleton_generate(paths, options);
+            }
+
             Cmd::SaveSessions => {
             }
 
@@ -136,34 +145,48 @@ impl Runtime {
         all_messages
     }
 
-    fn poll_session_loader(&mut self) -> Vec<Msg> {
+    pub fn save_sessions(&self, sessions: &SessionsModel) {
+        if let Some(dir) = self.get_sessions_directory() {
+            let _ = std::fs::create_dir_all(&dir);
+
+            for (id, session) in &sessions.sessions {
+                let path = dir.join(format!("{}.json", id));
+
+                if let Ok(json) = serde_json::to_string_pretty(session) {
+                    let _ = std::fs::write(path, json);
+                }
+            }
+        }
+    }
+
+    fn get_sessions_directory(&self) -> Option<PathBuf> {
+        dirs::data_local_dir().map(|dir| {
+            dir.join(APP_NAME.to_lowercase()).join("sessions")
+        })
+    }
+
+    fn poll_session_loader(&self) -> Vec<Msg> {
         let mut messages = Vec::new();
         let mut count: u32 = 0;
 
-        loop {
-            if count >= MAX_MESSAGES_PER_POLL {
-                break;
-            }
-
-            let result = self.session_loader.check_results();
-
-            if result.is_none() {
-                break;
-            }
-
+        while let Some(result) = self.session_loader.check_results() {
             count += 1;
 
-            let result = result.unwrap();
+            if count > MAX_MESSAGES_PER_POLL {
+                break;
+            }
 
             let msg = match result {
-                SessionLoadResult::Loaded(nodes) => Some(Msg::Tree(crate::app::message::Tree::Loaded(nodes))),
-                SessionLoadResult::Error(error) => Some(Msg::Tree(crate::app::message::Tree::LoadFailed(error))),
-                SessionLoadResult::Loading(_) => None,
+                SessionLoadResult::Loaded(nodes) => Msg::Tree(crate::app::message::Tree::Loaded(nodes)),
+                SessionLoadResult::Loading(message) => Msg::Tree(crate::app::message::Tree::LoadProgress {
+                    current: message,
+                    processed: 0,
+                    total: 0,
+                }),
+                SessionLoadResult::Error(error) => Msg::Tree(crate::app::message::Tree::LoadFailed(error)),
             };
 
-            if let Some(m) = msg {
-                messages.push(m);
-            }
+            messages.push(msg);
         }
 
         messages
@@ -171,23 +194,8 @@ impl Runtime {
 
     fn poll_tree_loader(&mut self) -> Vec<Msg> {
         let mut messages = Vec::new();
-        let mut count: u32 = 0;
 
-        loop {
-            if count >= MAX_MESSAGES_PER_POLL {
-                break;
-            }
-
-            let result = self.tree_loader.check_results();
-
-            if result.is_none() {
-                break;
-            }
-
-            count += 1;
-
-            let result = result.unwrap();
-
+        while let Some(result) = self.tree_loader.check_results() {
             let msg = match result {
                 TreeLoadResult::LoadedTree(nodes) => Msg::Tree(crate::app::message::Tree::Loaded(nodes)),
                 TreeLoadResult::ProcessingPath(path) => Msg::Tree(crate::app::message::Tree::LoadProgress {
@@ -243,12 +251,12 @@ impl Runtime {
             }
 
             match gather.gather_with_context(&paths, &options, Some(&git), Some(&query)) {
-                Ok((output, line_count)) => {
+                Ok((output, stats)) => {
                     if let Ok(mut clipboard) = ClipboardContext::new() {
                         let _ = clipboard.set_contents(output.clone());
                     }
 
-                    let message = format!("{} lines copied", line_count);
+                    let message = format!("{} lines / {} tokens copied", stats.line_count, stats.token_count);
                     let _ = sender.send(Msg::Copy(Copy::Completed(message)));
                 }
                 Err(e) => {
@@ -281,6 +289,42 @@ impl Runtime {
             }
 
             let _ = sender.send(Msg::Render(Render::Generated(output)));
+        });
+    }
+
+    fn execute_skeleton_generate(&mut self, paths: Vec<String>, options: Arc<Options>) {
+        let generator = self.skeleton_generator.clone();
+        let sender = self.msg_sender.clone();
+
+        sender.send(Msg::Skeleton(Skeleton::Started)).ok();
+
+        let (tx, rx) = mpsc::channel();
+        self.skeleton_gen_tx = Some(tx);
+
+        thread::spawn(move || {
+            thread::sleep(std::time::Duration::from_millis(500));
+
+            if rx.try_recv().is_ok() {
+                return;
+            }
+
+            match generator.generate(&paths, &options) {
+                Ok((output, stats)) => {
+                    if let Ok(mut clipboard) = ClipboardContext::new() {
+                        let _ = clipboard.set_contents(output.clone());
+                    }
+
+                    let message = format!(
+                        "{} files / {} lines / {} tokens skeleton copied",
+                        stats.file_count, stats.line_count, stats.token_count,
+                    );
+
+                    let _ = sender.send(Msg::Skeleton(Skeleton::Generated(message)));
+                }
+                Err(e) => {
+                    let _ = sender.send(Msg::Skeleton(Skeleton::Failed(e.to_string())));
+                }
+            }
         });
     }
 
@@ -329,25 +373,6 @@ impl Runtime {
 
             if path.exists() {
                 let _ = std::fs::remove_file(path);
-            }
-        }
-    }
-
-    fn get_sessions_directory(&self) -> Option<PathBuf> {
-        dirs::data_local_dir()
-            .map(|d| d.join(APP_NAME.to_lowercase()).join("sessions"))
-    }
-
-    pub fn save_sessions(&self, sessions: &SessionsModel) {
-        if let Some(dir) = self.get_sessions_directory() {
-            let _ = std::fs::create_dir_all(&dir);
-
-            for (id, session) in &sessions.sessions {
-                let path = dir.join(format!("{}.json", id));
-
-                if let Ok(json) = serde_json::to_string_pretty(session) {
-                    let _ = std::fs::write(path, json);
-                }
             }
         }
     }

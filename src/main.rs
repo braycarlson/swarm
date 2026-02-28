@@ -1,5 +1,6 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use eframe::egui;
 use single_instance::SingleInstance;
 use std::env;
 use std::io::Write;
@@ -7,7 +8,7 @@ use std::net::TcpStream;
 use std::path::Path;
 use swarm::{SwarmApp, APP_NAME};
 
-fn main() -> Result<(), eframe::Error> {
+fn main() {
     let args: Vec<String> = env::args().collect();
     let paths = parse_arguments(&args);
 
@@ -25,7 +26,7 @@ fn main() -> Result<(), eframe::Error> {
                 let _ = stream.write_all(content.as_bytes());
             }
 
-            return Ok(());
+            return;
         }
 
         Some(guard)
@@ -36,11 +37,13 @@ fn main() -> Result<(), eframe::Error> {
     let app = SwarmApp::new(paths, instance_guard);
     let options = create_window_options();
 
-    eframe::run_native(
+    if let Err(error) = eframe::run_native(
         APP_NAME,
         options,
         Box::new(|_cc| Ok(Box::new(app))),
-    )
+    ) {
+        eprintln!("Failed to launch GUI: {}", error);
+    }
 }
 
 fn parse_arguments(args: &[String]) -> Vec<String> {
@@ -79,7 +82,24 @@ fn create_window_options() -> eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
             .with_position([pos_x, pos_y])
-            .with_decorations(false),
+            .with_decorations(false)
+            .with_icon(load_icon()),
         ..Default::default()
+    }
+}
+
+fn load_icon() -> egui::IconData {
+    let icon_bytes = include_bytes!("../assets/logo.ico");
+
+    let image = image::load_from_memory(icon_bytes)
+        .expect("Failed to load icon")
+        .into_rgba8();
+
+    let (width, height) = image.dimensions();
+
+    egui::IconData {
+        rgba: image.into_raw(),
+        width,
+        height,
     }
 }

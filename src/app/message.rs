@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::app::state::search::ParsedQuery;
+use crate::app::state::ui::GenerateMode;
 use crate::app::state::OptionsTab;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
@@ -17,6 +18,7 @@ pub enum Msg {
     Search(Search),
     Copy(Copy),
     Render(Render),
+    Skeleton(Skeleton),
     Options(Options_),
     Filter(Filter),
     App(App),
@@ -77,11 +79,22 @@ pub enum Render {
 }
 
 #[derive(Debug, Clone)]
+pub enum Skeleton {
+    ModeChanged(GenerateMode),
+    Requested,
+    Started,
+    Generated(String),
+    Failed(String),
+}
+
+#[derive(Debug, Clone)]
 pub enum Options_ {
     Opened,
     Closed,
     TabChanged(OptionsTab),
     ThemeChanged(Theme),
+    UiScaleChanged(f32),
+    UiScaleReset,
     UseIconChanged(bool),
     DeleteSessionsChanged(bool),
     SingleInstanceChanged(bool),
@@ -117,6 +130,7 @@ pub enum Cmd {
     RefreshTree { nodes: Vec<FileNode>, options: Arc<Options> },
     GatherFiles { paths: Vec<String>, options: Arc<Options>, git: GitService, query: ParsedQuery },
     RenderTree { nodes: Vec<FileNode>, options: Arc<Options> },
+    GenerateSkeleton { paths: Vec<String>, options: Arc<Options> },
     SaveSessions,
     DeleteSessionData(String),
     PropagateCheckedWithLoad {

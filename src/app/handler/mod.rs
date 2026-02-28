@@ -5,6 +5,7 @@ pub mod options;
 pub mod render;
 pub mod search;
 pub mod session;
+pub mod skeleton;
 pub mod tree;
 
 use crate::app::state::Model;

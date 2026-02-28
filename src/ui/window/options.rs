@@ -167,6 +167,47 @@ fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<M
                 }
             });
     });
+
+    ui.add_space(10.0);
+
+    ui.horizontal(|ui| {
+        ui.label("UI Scale:");
+
+        let mut scale = model.options.effective_ui_scale();
+
+        let response = ui.add(
+            egui::Slider::new(&mut scale, 0.8..=2.5)
+                .step_by(0.1)
+                .fixed_decimals(1)
+                .suffix("x")
+        );
+
+        if response.drag_stopped() {
+            sender.send(Msg::Options(Options_::UiScaleChanged(scale))).ok();
+        }
+    });
+
+    ui.add_space(5.0);
+
+    let scale_label = if model.options.ui_scale.is_some() {
+        "Custom scale set"
+    } else {
+        "Auto-detected based on screen resolution"
+    };
+
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(scale_label)
+                .size(11.0)
+                .color(ui.visuals().weak_text_color())
+        );
+
+        if model.options.ui_scale.is_some() {
+            if ui.small_button("Reset to Auto").clicked() {
+                sender.send(Msg::Options(Options_::UiScaleReset)).ok();
+            }
+        }
+    });
 }
 
 #[cfg(windows)]

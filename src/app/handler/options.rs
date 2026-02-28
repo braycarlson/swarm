@@ -9,10 +9,12 @@ pub fn handle(model: &mut Model, ui: &mut UiState, msg: Options_) -> Cmd {
         Options_::Closed => handle_options_closed(model, ui),
         Options_::TabChanged(tab) => handle_options_tab_changed(ui, tab),
         Options_::ThemeChanged(theme) => handle_option_theme_changed(model, ui, theme),
+        Options_::UiScaleChanged(scale) => handle_option_ui_scale_changed(model, scale),
         Options_::UseIconChanged(value) => handle_option_use_icon_changed(model, value),
         Options_::DeleteSessionsChanged(value) => handle_option_delete_sessions_changed(model, value),
         Options_::SingleInstanceChanged(value) => handle_option_single_instance_changed(model, value),
         Options_::OutputFormatChanged(format) => handle_option_output_format_changed(model, format),
+        Options_::UiScaleReset => handle_option_ui_scale_reset(model),
     }
 }
 
@@ -55,6 +57,16 @@ fn handle_option_theme_changed(model: &mut Model, ui: &mut UiState, theme: crate
     Cmd::None
 }
 
+fn handle_option_ui_scale_changed(model: &mut Model, scale: f32) -> Cmd {
+    let mut new_options = (*model.options).clone();
+    new_options.ui_scale = Some(scale.clamp(0.5, 3.0));
+
+    let _ = new_options.save();
+    model.update_options(new_options);
+
+    Cmd::None
+}
+
 fn handle_option_use_icon_changed(model: &mut Model, value: bool) -> Cmd {
     let mut new_options = (*model.options).clone();
     new_options.use_icon = value;
@@ -88,6 +100,16 @@ fn handle_option_single_instance_changed(model: &mut Model, value: bool) -> Cmd 
 fn handle_option_output_format_changed(model: &mut Model, format: crate::model::output::OutputFormat) -> Cmd {
     let mut new_options = (*model.options).clone();
     new_options.output_format = format;
+
+    let _ = new_options.save();
+    model.update_options(new_options);
+
+    Cmd::None
+}
+
+fn handle_option_ui_scale_reset(model: &mut Model) -> Cmd {
+    let mut new_options = (*model.options).clone();
+    new_options.ui_scale = None;
 
     let _ = new_options.save();
     model.update_options(new_options);

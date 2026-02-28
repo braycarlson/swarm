@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
-use eframe::egui::{self, Context, RichText};
+use eframe::egui::{self, Align2, Context, RichText};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToastLevel {
@@ -87,14 +87,6 @@ impl ToastSystem {
         let opacity = toast.opacity();
 
         let content_rect = ctx.content_rect();
-        let toast_width = 150.0;
-        let toast_height = 50.0;
-
-        let pos = egui::pos2(
-            content_rect.center().x - toast_width / 2.0,
-            content_rect.center().y - toast_height / 2.0,
-        );
-
         let visuals = ctx.style().visuals.clone();
 
         let stroke_color = match toast.level {
@@ -107,14 +99,15 @@ impl ToastSystem {
         egui::Window::new("toast_notification")
             .title_bar(false)
             .resizable(false)
-            .fixed_pos(pos)
-            .fixed_size([toast_width, toast_height])
+            .pivot(Align2::CENTER_CENTER)
+            .current_pos(content_rect.center())
+            .auto_sized()
             .frame(
                 egui::Frame::NONE
                     .fill(visuals.extreme_bg_color.linear_multiply(opacity))
                     .stroke(egui::Stroke::new(0.5, stroke_color.linear_multiply(opacity)))
                     .corner_radius(6.0)
-                    .inner_margin(8.0)
+                    .inner_margin(egui::Margin::symmetric(12, 10))
                     .shadow(egui::epaint::Shadow {
                         offset: [0, 4],
                         blur: 16,
@@ -130,15 +123,15 @@ impl ToastSystem {
                             .color(visuals.text_color().linear_multiply(opacity))
                     );
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add(
-                            egui::Button::new(RichText::new("×").color(visuals.text_color().linear_multiply(opacity)))
-                                .frame(false)
-                        ).on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked() {
-                            should_close = true;
-                        }
-                    });
+                    ui.add_space(8.0);
+
+                    if ui.add(
+                        egui::Button::new(RichText::new("×").color(visuals.text_color().linear_multiply(opacity)))
+                            .frame(false)
+                    ).on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked() {
+                        should_close = true;
+                    }
                 });
             });
 

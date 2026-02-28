@@ -12,6 +12,12 @@ use crate::model::path::PathExtensions;
 use super::filter::{GlobPathFilter, PathFilter};
 use super::git::GitService;
 
+#[derive(Clone, Debug)]
+pub struct GatherStats {
+    pub line_count: usize,
+    pub token_count: usize,
+}
+
 #[derive(Clone)]
 pub struct GatherService;
 
@@ -20,7 +26,7 @@ impl GatherService {
         Self
     }
 
-    pub fn gather(&self, paths: &[String], options: &Options) -> SwarmResult<(String, usize)> {
+    pub fn gather(&self, paths: &[String], options: &Options) -> SwarmResult<(String, GatherStats)> {
         self.gather_with_context(paths, options, None, None)
     }
 
@@ -30,7 +36,7 @@ impl GatherService {
         options: &Options,
         git_service: Option<&GitService>,
         query: Option<&ParsedQuery>,
-    ) -> SwarmResult<(String, usize)> {
+    ) -> SwarmResult<(String, GatherStats)> {
         let filter: Arc<dyn PathFilter> = Arc::new(GlobPathFilter::from_options(options)?);
         let mut files = Vec::new();
 
@@ -56,9 +62,13 @@ impl GatherService {
             .unwrap_or(options.output_format);
 
         let output = output_format.format(&files)?;
-        let total_lines: usize = output.lines().count();
 
-        Ok((output, total_lines))
+        let stats = GatherStats {
+            line_count: output.lines().count(),
+            token_count: estimate_tokens(&output),
+        };
+
+        Ok((output, stats))
     }
 
     fn collect_file(
@@ -139,4 +149,18 @@ impl Default for GatherService {
     fn default() -> Self {
         Self::new()
     }
+}
+
+pub fn estimate_tokens(text: &str) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+
+    let char_count = text.chars().count();
+    let word_count = text.split_whitespace().count();
+
+    let char_estimate = char_count / 4;
+    let word_estimate = (word_count as f64 * 1.3) as usize;
+
+    (char_estimate + word_estimate) / 2
 }
