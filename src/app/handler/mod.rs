@@ -73,7 +73,7 @@ pub fn toggle_node(nodes: &mut [FileNode], path: &[u32], checked: bool, propagat
         return;
     }
 
-    let mut current = nodes;
+    let mut current = &mut *nodes;
     let path_len = path.len() as u32;
 
     let mut depth: u32 = 0;
@@ -114,4 +114,68 @@ pub fn toggle_node(nodes: &mut [FileNode], path: &[u32], checked: bool, propagat
 
         depth += 1;
     }
+
+    update_ancestors(nodes, path, checked);
+}
+
+fn update_ancestors(nodes: &mut [FileNode], path: &[u32], checked: bool) {
+    if path.len() <= 1 {
+        return;
+    }
+
+    let ancestor_count = path.len() - 1;
+
+    if checked {
+        let mut current = &mut *nodes;
+
+        for &index in &path[..ancestor_count] {
+            if let Some(node) = current.get_mut(index as usize) {
+                node.checked = true;
+                current = &mut node.children;
+            } else {
+                break;
+            }
+        }
+    } else {
+        for depth in (0..ancestor_count).rev() {
+            let has_selected = has_selected_child(&*nodes, &path[..=depth]);
+
+            if has_selected {
+                break;
+            }
+
+            let mut current = &mut *nodes;
+
+            for &index in &path[..depth] {
+                if let Some(node) = current.get_mut(index as usize) {
+                    current = &mut node.children;
+                } else {
+                    return;
+                }
+            }
+
+            if let Some(node) = current.get_mut(path[depth] as usize) {
+                node.checked = false;
+            }
+        }
+    }
+}
+
+fn has_selected_child(nodes: &[FileNode], path: &[u32]) -> bool {
+    let mut current = nodes;
+    let last = path.len() - 1;
+
+    for (i, &index) in path.iter().enumerate() {
+        if let Some(node) = current.get(index as usize) {
+            if i == last {
+                return node.children.iter().any(FileNode::is_selected);
+            }
+
+            current = &node.children;
+        } else {
+            return false;
+        }
+    }
+
+    false
 }
