@@ -4,7 +4,7 @@ use std::thread;
 use eframe::egui;
 use rfd::FileDialog;
 
-use crate::app::message::{App, Msg, Options_, Session};
+use crate::app::message::{App, Msg, Options_, Preset_, Session};
 use crate::app::state::{Model, UiState};
 use crate::constants::APP_NAME;
 
@@ -38,6 +38,20 @@ pub fn render(
 
                     if ui.button("New Session").clicked() {
                         sender.send(Msg::Session(Session::Created("Session".to_string()))).ok();
+                        ui.close();
+                    }
+
+                    ui.separator();
+
+                    if ui.add_enabled(has_tree, egui::Button::new("Save Preset")).clicked() {
+                        sender.send(Msg::Preset(Preset_::SaveDialogOpened)).ok();
+                        ui.close();
+                    }
+
+                    let has_presets = !model.presets.presets.is_empty();
+
+                    if ui.add_enabled(has_presets, egui::Button::new("Load Preset")).clicked() {
+                        sender.send(Msg::Preset(Preset_::LoadDialogOpened)).ok();
                         ui.close();
                     }
 

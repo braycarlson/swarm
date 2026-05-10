@@ -10,11 +10,12 @@ pub fn handle(model: &mut Model, ui: &mut UiState, msg: Options_) -> Cmd {
         Options_::TabChanged(tab) => handle_options_tab_changed(ui, tab),
         Options_::ThemeChanged(theme) => handle_option_theme_changed(model, ui, theme),
         Options_::UiScaleChanged(scale) => handle_option_ui_scale_changed(model, scale),
+        Options_::UiScaleReset => handle_option_ui_scale_reset(model),
         Options_::UseIconChanged(value) => handle_option_use_icon_changed(model, value),
+        Options_::ShowHiddenChanged(value) => handle_option_show_hidden_changed(model, value),
         Options_::DeleteSessionsChanged(value) => handle_option_delete_sessions_changed(model, value),
         Options_::SingleInstanceChanged(value) => handle_option_single_instance_changed(model, value),
         Options_::OutputFormatChanged(format) => handle_option_output_format_changed(model, format),
-        Options_::UiScaleReset => handle_option_ui_scale_reset(model),
     }
 }
 
@@ -70,6 +71,16 @@ fn handle_option_ui_scale_changed(model: &mut Model, scale: f32) -> Cmd {
 fn handle_option_use_icon_changed(model: &mut Model, value: bool) -> Cmd {
     let mut new_options = (*model.options).clone();
     new_options.use_icon = value;
+
+    let _ = new_options.save();
+    model.update_options(new_options);
+
+    Cmd::None
+}
+
+fn handle_option_show_hidden_changed(model: &mut Model, value: bool) -> Cmd {
+    let mut new_options = (*model.options).clone();
+    new_options.show_hidden = value;
 
     let _ = new_options.save();
     model.update_options(new_options);

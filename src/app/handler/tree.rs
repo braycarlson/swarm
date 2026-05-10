@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use crate::app::message::{Cmd, CmdBuilder, Tree};
 use crate::app::state::{LoadStatus, Model, UiState};
+use crate::app::state::SearchModel;
 use crate::model::node::FileNode;
+use crate::services::filesystem::git::GitService;
 
 use super::{load_node_children, sync_to_active_session, toggle_node};
 
@@ -11,6 +13,8 @@ pub fn handle(model: &mut Model, ui: &mut UiState, msg: Tree) -> Cmd {
         Tree::RefreshRequested => handle_tree_refresh_requested(model, ui),
         Tree::NodeToggled { path, checked, propagate } => { handle_tree_node_toggled(model, path, checked, propagate) }
         Tree::NodeExpanded { path } => handle_tree_node_expanded(model, path),
+        Tree::SelectAll => handle_select_all(model),
+        Tree::DeselectAll => handle_deselect_all(model),
         Tree::Loaded(nodes) => handle_tree_loaded(model, ui, nodes),
         Tree::LoadProgress { current, processed, total } => { handle_tree_load_progress(model, current, processed, total) }
         Tree::LoadFailed(error) => handle_tree_load_failed(model, error),
@@ -93,13 +97,78 @@ fn handle_tree_node_toggled(model: &mut Model, path: Vec<usize>, checked: bool, 
             path: path_u32,
             checked,
             options: Arc::clone(&model.options),
+            search: model.search.clone(),
+            git: model.git.clone(),
         };
     }
 
-    toggle_node(&mut model.tree.nodes, &path_u32, checked, propagate, &model.options);
+    if model.search.has_query() {
+        toggle_node_filtered(&mut model.tree.nodes, &path_u32, checked, &model.options, &model.search, &model.git);
+    } else {
+        toggle_node(&mut model.tree.nodes, &path_u32, checked, propagate, &model.options);
+    }
+
     sync_to_active_session(model);
 
     Cmd::None
+}
+
+fn toggle_node_filtered(
+    nodes: &mut [FileNode],
+    path: &[u32],
+    checked: bool,
+    options: &crate::model::options::Options,
+    search: &SearchModel,
+    git: &GitService,
+) {
+    use crate::services::tree::traversal::Traversable;
+
+    if path.is_empty() {
+        return;
+    }
+
+    let mut current = &mut *nodes;
+    let path_len = path.len() as u32;
+    let mut depth: u32 = 0;
+
+    while depth < path_len {
+        if depth >= super::MAX_PATH_DEPTH {
+            break;
+        }
+
+        let index_value = path[depth as usize];
+        let is_last = (depth + 1) == path_len;
+
+        if is_last {
+            let node_option = current.get_mut(index_value as usize);
+
+            if node_option.is_none() {
+                break;
+            }
+
+            let node = node_option.unwrap();
+            node.checked = checked;
+
+            if node.is_directory() {
+                node.propagate_checked_filtered(checked, options, search, Some(git));
+            }
+
+            break;
+        } else {
+            let node_option = current.get_mut(index_value as usize);
+
+            if node_option.is_none() {
+                break;
+            }
+
+            let node = node_option.unwrap();
+            current = &mut node.children;
+        }
+
+        depth += 1;
+    }
+
+    super::update_ancestors(nodes, path, checked);
 }
 
 fn check_has_unloaded(node: &FileNode) -> bool {
@@ -202,4 +271,25 @@ fn handle_background_load_completed(model: &mut Model, nodes: Vec<FileNode>) -> 
     sync_to_active_session(model);
 
     Cmd::None
+}
+
+fn handle_select_all(model: &mut Model) -> Cmd {
+    set_all_checked(&mut model.tree.nodes, true);
+    model.tree.update_file_count();
+    sync_to_active_session(model);
+    Cmd::None
+}
+
+fn handle_deselect_all(model: &mut Model) -> Cmd {
+    set_all_checked(&mut model.tree.nodes, false);
+    model.tree.update_file_count();
+    sync_to_active_session(model);
+    Cmd::None
+}
+
+fn set_all_checked(nodes: &mut [FileNode], checked: bool) {
+    for node in nodes {
+        node.checked = checked;
+        set_all_checked(&mut node.children, checked);
+    }
 }

@@ -1,4 +1,8 @@
+use std::path::Path;
 use std::sync::mpsc::Sender;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 use eframe::egui;
 
@@ -52,6 +56,27 @@ pub fn render(
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             render_tree_nodes(ui, &model.tree.nodes, model, &model.git, sender);
+
+                            let remaining = ui.available_size();
+
+                            if remaining.y > 0.0 {
+                                let (_, response) = ui.allocate_exact_size(
+                                    remaining,
+                                    egui::Sense::click(),
+                                );
+
+                                response.context_menu(|ui| {
+                                    if ui.button("Select All").clicked() {
+                                        sender.send(Msg::Tree(Tree::SelectAll)).ok();
+                                        ui.close();
+                                    }
+
+                                    if ui.button("Deselect All").clicked() {
+                                        sender.send(Msg::Tree(Tree::DeselectAll)).ok();
+                                        ui.close();
+                                    }
+                                });
+                            }
                         });
                 }
             });
@@ -192,13 +217,40 @@ fn render_node(
                     })).ok();
                 }
 
-                if ui.selectable_label(node.checked, &label).clicked() {
+                let response = ui.selectable_label(node.checked, &label);
+
+                if response.clicked() {
                     sender.send(Msg::Tree(Tree::NodeToggled {
-                        path,
+                        path: path.clone(),
                         checked: !node.checked,
                         propagate: false,
                     })).ok();
                 }
+
+                response.context_menu(|ui| {
+                    if ui.button("Open File").clicked() {
+                        open_file(&node.path);
+                        ui.close();
+                    }
+
+                    if ui.button("Reveal in Explorer").clicked() {
+                        reveal_in_explorer(&node.path);
+                        ui.close();
+                    }
+
+                    ui.separator();
+
+                    let toggle_label = if node.checked { "Deselect" } else { "Select" };
+
+                    if ui.button(toggle_label).clicked() {
+                        sender.send(Msg::Tree(Tree::NodeToggled {
+                            path,
+                            checked: !node.checked,
+                            propagate: false,
+                        })).ok();
+                        ui.close();
+                    }
+                });
             });
         }
         NodeKind::Directory => {
@@ -218,7 +270,7 @@ fn render_node(
                     .id_salt(&node.path)
                     .default_open(default_open);
 
-                header.show(ui, |ui| {
+                let cr = header.show(ui, |ui| {
                     if !node.loaded {
                         sender.send(Msg::Tree(Tree::NodeExpanded { path: path.clone() })).ok();
                         ui.spinner();
@@ -231,7 +283,83 @@ fn render_node(
                         }
                     }
                 });
+
+                cr.header_response.context_menu(|ui| {
+                    if ui.button("Select All").clicked() {
+                        sender.send(Msg::Tree(Tree::NodeToggled {
+                            path: path.clone(),
+                            checked: true,
+                            propagate: true,
+                        })).ok();
+                        ui.close();
+                    }
+
+                    if ui.button("Deselect All").clicked() {
+                        sender.send(Msg::Tree(Tree::NodeToggled {
+                            path: path.clone(),
+                            checked: false,
+                            propagate: true,
+                        })).ok();
+                        ui.close();
+                    }
+
+                    ui.separator();
+
+                    if ui.button("Reveal in Explorer").clicked() {
+                        reveal_in_explorer(&node.path);
+                        ui.close();
+                    }
+                });
             });
+        }
+    }
+}
+
+fn open_file(path: &Path) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", "", &path.display().to_string()])
+            .creation_flags(0x08000000)
+            .spawn();
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg(path)
+            .spawn();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open")
+            .arg(path)
+            .spawn();
+    }
+}
+
+fn reveal_in_explorer(path: &Path) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer")
+            .args(["/select,", &path.display().to_string()])
+            .spawn();
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .args(["-R", &path.display().to_string()])
+            .spawn();
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if let Some(parent) = path.parent() {
+            let _ = std::process::Command::new("xdg-open")
+                .arg(parent)
+                .spawn();
         }
     }
 }

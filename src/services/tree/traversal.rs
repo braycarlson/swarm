@@ -13,6 +13,7 @@ pub trait Traversable {
     fn matches_parsed_query_with_git(&self, query: &ParsedQuery, git: Option<&GitService>) -> bool;
     fn propagate_checked(&mut self, checked: bool);
     fn propagate_checked_with_load(&mut self, checked: bool, options: &Options);
+    fn propagate_checked_filtered(&mut self, checked: bool, options: &Options, search: &SearchModel, git: Option<&GitService>);
     fn refresh(&mut self, options: &Options) -> SwarmResult<bool>;
 }
 
@@ -62,6 +63,27 @@ impl Traversable for FileNode {
 
             for child in &mut self.children {
                 child.propagate_checked_with_load(checked, options);
+            }
+        }
+    }
+
+    fn propagate_checked_filtered(&mut self, checked: bool, options: &Options, search: &SearchModel, git: Option<&GitService>) {
+        if !search.has_query() {
+            self.propagate_checked_with_load(checked, options);
+            return;
+        }
+
+        self.checked = checked;
+
+        if self.is_directory() {
+            if !self.loaded {
+                let _ = self.load_children(options);
+            }
+
+            for child in &mut self.children {
+                if should_show_node_with_search(child, search, git) {
+                    child.propagate_checked_filtered(checked, options, search, git);
+                }
             }
         }
     }

@@ -23,7 +23,7 @@ pub fn load_children(node: &mut FileNode, options: &Options) -> SwarmResult<bool
         let entry = entry_result?;
         let child_path = entry.path();
 
-        if child_path.is_hidden() {
+        if !options.show_hidden && child_path.is_hidden() {
             continue;
         }
 

@@ -22,6 +22,9 @@ pub struct Options {
     #[serde(default)]
     pub output_format: OutputFormat,
 
+    #[serde(default)]
+    pub show_hidden: bool,
+
     #[serde(default = "default_single_instance")]
     pub single_instance: bool,
 
@@ -282,6 +285,7 @@ impl Default for Options {
             exclude: default_exclude_patterns(),
             include: Vec::new(),
             output_format: OutputFormat::default(),
+            show_hidden: false,
             single_instance: true,
             theme: Theme::default(),
             ui_scale: None,
@@ -365,6 +369,7 @@ impl Options {
             && self.exclude == other.exclude
             && self.include == other.include
             && self.output_format == other.output_format
+            && self.show_hidden == other.show_hidden
             && self.single_instance == other.single_instance
             && self.theme == other.theme
             && self.ui_scale == other.ui_scale

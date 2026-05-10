@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::app::state::search::ParsedQuery;
 use crate::app::state::ui::GenerateMode;
-use crate::app::state::OptionsTab;
+use crate::app::state::{OptionsTab, SearchModel};
 use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::model::output::OutputFormat;
@@ -21,6 +21,7 @@ pub enum Msg {
     Skeleton(Skeleton),
     Options(Options_),
     Filter(Filter),
+    Preset(Preset_),
     App(App),
 }
 
@@ -40,6 +41,8 @@ pub enum Tree {
     RefreshRequested,
     NodeToggled { path: Vec<usize>, checked: bool, propagate: bool },
     NodeExpanded { path: Vec<usize> },
+    SelectAll,
+    DeselectAll,
     Loaded(Vec<FileNode>),
     LoadProgress { current: String, processed: usize, total: usize },
     LoadFailed(String),
@@ -96,6 +99,7 @@ pub enum Options_ {
     UiScaleChanged(f32),
     UiScaleReset,
     UseIconChanged(bool),
+    ShowHiddenChanged(bool),
     DeleteSessionsChanged(bool),
     SingleInstanceChanged(bool),
     OutputFormatChanged(OutputFormat),
@@ -111,6 +115,18 @@ pub enum Filter {
     ExcludeRemoved(usize),
     ExcludesReset,
     ExcludeFilterChanged(String),
+}
+
+#[derive(Debug, Clone)]
+pub enum Preset_ {
+    SaveDialogOpened,
+    SaveDialogClosed,
+    LoadDialogOpened,
+    LoadDialogClosed,
+    NameChanged(String),
+    Saved(String),
+    Loaded(String),
+    Deleted(String),
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +154,8 @@ pub enum Cmd {
         path: Vec<u32>,
         checked: bool,
         options: Arc<Options>,
+        search: SearchModel,
+        git: GitService,
     },
     StartExpensiveFilter {
         nodes: Vec<FileNode>,

@@ -6,6 +6,7 @@ pub mod ui;
 use std::sync::Arc;
 
 use crate::model::options::Options;
+use crate::model::preset::PresetModel;
 use crate::services::filesystem::git::GitService;
 use crate::services::worker::BackgroundLoader;
 
@@ -15,24 +16,25 @@ pub use tree::{LoadStatus, TreeModel};
 pub use ui::{FilterStatus, OptionsState, OptionsTab, UiState};
 
 #[derive(Clone)]
-pub struct Model {
-    pub background_loader: BackgroundLoader,
-    pub filtered_nodes: Option<Vec<FilteredNode>>,
-    pub git: GitService,
-    pub options: Arc<Options>,
-    pub original_options: Arc<Options>,
-    pub search: SearchModel,
-    pub sessions: SessionsModel,
-    pub tree: TreeModel,
-}
-
-#[derive(Clone)]
 pub struct FilteredNode {
     pub depth: usize,
     pub index_path: Vec<usize>,
     pub node_index: usize,
     pub parent_path: Vec<usize>,
     pub visible: bool,
+}
+
+#[derive(Clone)]
+pub struct Model {
+    pub background_loader: BackgroundLoader,
+    pub filtered_nodes: Option<Vec<FilteredNode>>,
+    pub git: GitService,
+    pub options: Arc<Options>,
+    pub original_options: Arc<Options>,
+    pub presets: PresetModel,
+    pub search: SearchModel,
+    pub sessions: SessionsModel,
+    pub tree: TreeModel,
 }
 
 impl Model {
@@ -45,6 +47,7 @@ impl Model {
             git: GitService::new(),
             options: Arc::clone(&options),
             original_options: options,
+            presets: PresetModel::load_from_disk(),
             search: SearchModel::default(),
             sessions: SessionsModel::new(),
             tree: TreeModel::new(initial_paths),

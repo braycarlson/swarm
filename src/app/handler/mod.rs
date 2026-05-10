@@ -2,6 +2,7 @@ pub mod app;
 pub mod copy;
 pub mod filter;
 pub mod options;
+pub mod preset;
 pub mod render;
 pub mod search;
 pub mod session;
@@ -118,7 +119,7 @@ pub fn toggle_node(nodes: &mut [FileNode], path: &[u32], checked: bool, propagat
     update_ancestors(nodes, path, checked);
 }
 
-fn update_ancestors(nodes: &mut [FileNode], path: &[u32], checked: bool) {
+pub(crate) fn update_ancestors(nodes: &mut [FileNode], path: &[u32], checked: bool) {
     if path.len() <= 1 {
         return;
     }

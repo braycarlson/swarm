@@ -15,6 +15,7 @@ impl Dispatcher {
             Msg::Skeleton(msg) => handler::skeleton::handle(model, ui, msg),
             Msg::Options(msg) => handler::options::handle(model, ui, msg),
             Msg::Filter(msg) => handler::filter::handle(model, ui, msg),
+            Msg::Preset(msg) => handler::preset::handle(model, ui, msg),
             Msg::App(msg) => handler::app::handle(model, ui, msg),
         }
     }

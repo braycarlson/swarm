@@ -10,6 +10,7 @@ use super::panel::central;
 use super::panel::bottom;
 use super::window::options;
 use super::window::about;
+use super::window::preset;
 
 pub struct View;
 
@@ -30,6 +31,14 @@ impl View {
 
         if ui.show_about {
             about::render(ctx, sender);
+        }
+
+        if ui.show_save_preset {
+            preset::render_save(ctx, ui, sender);
+        }
+
+        if ui.show_load_preset {
+            preset::render_load(ctx, model, sender);
         }
     }
 }

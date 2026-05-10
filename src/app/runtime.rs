@@ -6,7 +6,7 @@ use std::thread;
 use copypasta::{ClipboardContext, ClipboardProvider};
 
 use crate::app::message::{Cmd, Copy, Msg, Render, Search, Skeleton};
-use crate::app::state::{SessionData, SessionsModel};
+use crate::app::state::{SessionData, SessionsModel, SearchModel};
 use crate::constants::APP_NAME;
 use crate::model::node::FileNode;
 use crate::model::options::Options;
@@ -108,8 +108,8 @@ impl Runtime {
                 self.delete_session_file(&id);
             }
 
-            Cmd::PropagateCheckedWithLoad { nodes, path, checked, options } => {
-                self.execute_propagate_with_load(nodes, path, checked, options);
+            Cmd::PropagateCheckedWithLoad { nodes, path, checked, options, search, git } => {
+                self.execute_propagate_with_load(nodes, path, checked, options, search, git);
             }
 
             Cmd::StartExpensiveFilter { nodes, query, git } => {
@@ -334,6 +334,8 @@ impl Runtime {
         path: Vec<u32>,
         checked: bool,
         options: Arc<Options>,
+        search: SearchModel,
+        git: GitService,
     ) {
         let sender = self.msg_sender.clone();
 
@@ -360,7 +362,11 @@ impl Runtime {
             }
 
             if let Some(node) = target_node {
-                node.propagate_checked_with_load(checked, &options);
+                if search.has_query() {
+                    node.propagate_checked_filtered(checked, &options, &search, Some(&git));
+                } else {
+                    node.propagate_checked_with_load(checked, &options);
+                }
             }
 
             let _ = sender.send(Msg::Tree(crate::app::message::Tree::PropagateCompleted(nodes)));

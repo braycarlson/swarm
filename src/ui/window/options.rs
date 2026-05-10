@@ -110,6 +110,12 @@ fn render_display_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg>
     if ui.checkbox(&mut use_icon, "Use icons in tree").clicked() {
         sender.send(Msg::Options(Options_::UseIconChanged(use_icon))).ok();
     }
+
+    let mut show_hidden = model.options.show_hidden;
+
+    if ui.checkbox(&mut show_hidden, "Show hidden files").clicked() {
+        sender.send(Msg::Options(Options_::ShowHiddenChanged(show_hidden))).ok();
+    }
 }
 
 fn render_output_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg>) {
