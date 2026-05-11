@@ -34,7 +34,10 @@ impl AsciiTreeFormat {
         let _ = writeln!(output, "{}{}{}{}", prefix, connector, icon, name);
 
         if node.is_directory() && !node.children.is_empty() {
-            let child_prefix = format!("{}{}    ", prefix, if is_last { " " } else { "│" });
+            let extension = if is_last { "     " } else { "│    " };
+            let mut child_prefix = String::with_capacity(prefix.len() + 5);
+            child_prefix.push_str(prefix);
+            child_prefix.push_str(extension);
 
             for (index, child) in node.children.iter().enumerate() {
                 let is_last_child = index == node.children.len() - 1;
@@ -58,6 +61,8 @@ impl TreeFormat for AsciiTreeFormat {
     }
 }
 
+const COMPACT_INDENT_CACHE: &str = "                                                                                                                                ";
+
 pub struct CompactTreeFormat {
     use_icons: bool,
 }
@@ -79,7 +84,8 @@ impl CompactTreeFormat {
     }
 
     fn format_node(&self, output: &mut String, node: &FileNode, depth: usize) {
-        let indent = "  ".repeat(depth);
+        let end = (depth * 2).min(COMPACT_INDENT_CACHE.len());
+        let indent = &COMPACT_INDENT_CACHE[..end];
         let icon = self.icon(node);
         let name = node.file_name().unwrap_or_else(|| "Unknown".to_string());
 

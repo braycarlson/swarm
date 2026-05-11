@@ -87,7 +87,7 @@ impl ToastSystem {
         let opacity = toast.opacity();
 
         let content_rect = ctx.content_rect();
-        let visuals = ctx.style().visuals.clone();
+        let visuals = ctx.global_style().visuals.clone();
 
         let stroke_color = match toast.level {
             ToastLevel::Success => visuals.selection.stroke.color,

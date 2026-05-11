@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::constants::APP_NAME;
@@ -12,12 +12,18 @@ pub struct Preset {
     pub id: String,
     pub name: String,
     pub created_at: u64,
-    pub root: PathBuf,
-    pub paths: Vec<PathBuf>,
+    pub root: Option<PathBuf>,
+    pub paths: Option<Vec<PathBuf>>,
+    pub query: Option<String>,
 }
 
 impl Preset {
-    pub fn new(name: String, root: PathBuf, paths: Vec<PathBuf>) -> Self {
+    pub fn new(
+        name: String,
+        root: Option<PathBuf>,
+        paths: Option<Vec<PathBuf>>,
+        query: Option<String>,
+    ) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -29,19 +35,54 @@ impl Preset {
             created_at: now,
             root,
             paths,
+            query,
         }
+    }
+
+    pub fn is_generic(&self) -> bool {
+        self.root.is_none()
+    }
+
+    pub fn has_selection(&self) -> bool {
+        self.paths.as_ref().is_some_and(|p| !p.is_empty())
+    }
+
+    pub fn has_query(&self) -> bool {
+        self.query.as_ref().is_some_and(|q| !q.is_empty())
+    }
+
+    pub fn matches_root(&self, root: &PathBuf) -> bool {
+        self.root.as_ref().is_some_and(|r| r == root)
+    }
+
+    pub fn description(&self) -> String {
+        let mut parts = Vec::new();
+
+        if let Some(ref paths) = self.paths {
+            parts.push(format!("{} files", paths.len()));
+        }
+
+        if self.has_query() {
+            parts.push("search".to_string());
+        }
+
+        if self.is_generic() {
+            parts.push("generic".to_string());
+        }
+
+        parts.join(" + ")
     }
 }
 
 #[derive(Clone)]
 pub struct PresetModel {
-    pub presets: HashMap<String, Preset>,
+    pub presets: FxHashMap<String, Preset>,
 }
 
 impl PresetModel {
     pub fn new() -> Self {
         Self {
-            presets: HashMap::new(),
+            presets: FxHashMap::default(),
         }
     }
 
@@ -61,6 +102,16 @@ impl PresetModel {
         let mut presets: Vec<&Preset> = self.presets.values().collect();
         presets.sort_by(|a, b| a.created_at.cmp(&b.created_at));
         presets
+    }
+
+    pub fn list_for_root(&self, root: Option<&PathBuf>) -> Vec<&Preset> {
+        self.list()
+            .into_iter()
+            .filter(|p| {
+                p.is_generic()
+                    || root.is_some_and(|r| p.matches_root(r))
+            })
+            .collect()
     }
 
     pub fn save_to_disk(&self) -> SwarmResult<()> {

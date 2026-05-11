@@ -51,6 +51,7 @@ impl OptionsState {
 
 #[derive(Clone)]
 pub struct UiState {
+    pub bulk_select_text: String,
     pub copy_in_progress: bool,
     pub edit_name: String,
     pub editing_session: Option<String>,
@@ -60,11 +61,15 @@ pub struct UiState {
     pub new_exclude_filter: String,
     pub new_include_filter: String,
     pub options_tab: OptionsTab,
+    pub preset_generic: bool,
+    pub preset_include_search: bool,
+    pub preset_include_selection: bool,
     pub preset_name: String,
     pub search_debounce: Option<Instant>,
     pub search_pending: Option<String>,
     pub should_focus: bool,
     pub show_about: bool,
+    pub show_bulk_select: bool,
     pub show_load_preset: bool,
     pub show_options: bool,
     pub show_save_preset: bool,
@@ -77,6 +82,7 @@ pub struct UiState {
 impl UiState {
     pub fn new(theme: Theme) -> Self {
         Self {
+            bulk_select_text: String::new(),
             copy_in_progress: false,
             edit_name: String::new(),
             editing_session: None,
@@ -86,11 +92,15 @@ impl UiState {
             new_exclude_filter: String::new(),
             new_include_filter: String::new(),
             options_tab: OptionsTab::default(),
+            preset_generic: false,
+            preset_include_search: false,
+            preset_include_selection: true,
             preset_name: String::new(),
             search_debounce: None,
             search_pending: None,
             should_focus: false,
             show_about: false,
+            show_bulk_select: false,
             show_load_preset: false,
             show_options: false,
             show_save_preset: false,

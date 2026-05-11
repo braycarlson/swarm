@@ -1,5 +1,6 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
+
+use rustc_hash::FxHashMap;
 
 use crate::app::message::{Cmd, Preset_};
 use crate::app::state::{Model, UiState};
@@ -10,20 +11,26 @@ use super::sync_to_active_session;
 
 pub fn handle(model: &mut Model, ui: &mut UiState, msg: Preset_) -> Cmd {
     match msg {
-        Preset_::SaveDialogOpened => handle_save_dialog_opened(ui),
+        Preset_::SaveDialogOpened => handle_save_dialog_opened(model, ui),
         Preset_::SaveDialogClosed => handle_save_dialog_closed(ui),
         Preset_::LoadDialogOpened => handle_load_dialog_opened(ui),
         Preset_::LoadDialogClosed => handle_load_dialog_closed(ui),
         Preset_::NameChanged(name) => handle_name_changed(ui, name),
+        Preset_::IncludeSelectionChanged(v) => { ui.preset_include_selection = v; Cmd::None }
+        Preset_::IncludeSearchChanged(v) => { ui.preset_include_search = v; Cmd::None }
+        Preset_::GenericChanged(v) => { ui.preset_generic = v; Cmd::None }
         Preset_::Saved(name) => handle_saved(model, ui, name),
         Preset_::Loaded(id) => handle_loaded(model, ui, id),
         Preset_::Deleted(id) => handle_deleted(model, ui, id),
     }
 }
 
-fn handle_save_dialog_opened(ui: &mut UiState) -> Cmd {
+fn handle_save_dialog_opened(model: &Model, ui: &mut UiState) -> Cmd {
     ui.show_save_preset = true;
     ui.preset_name.clear();
+    ui.preset_include_selection = true;
+    ui.preset_include_search = model.search.has_query();
+    ui.preset_generic = false;
     Cmd::None
 }
 
@@ -49,24 +56,45 @@ fn handle_name_changed(ui: &mut UiState, name: String) -> Cmd {
 }
 
 fn handle_saved(model: &mut Model, ui: &mut UiState, name: String) -> Cmd {
-    let states = model.tree.collect_checkbox_states();
-    let paths: Vec<PathBuf> = states.into_iter()
-        .filter(|(_, checked)| *checked)
-        .map(|(path, _)| path)
-        .collect();
+    let include_selection = ui.preset_include_selection;
+    let include_search = ui.preset_include_search;
+    let generic = ui.preset_generic;
 
-    if paths.is_empty() {
-        ui.toast.error("No files selected to save as preset");
-        ui.show_save_preset = false;
-        ui.preset_name.clear();
+    if !include_selection && !include_search {
+        ui.toast.error("Select at least one option to save");
         return Cmd::None;
     }
 
-    let root = model.tree.nodes.first()
-        .map(|n| n.path.clone())
-        .unwrap_or_default();
+    let paths = if include_selection {
+        let states = model.tree.collect_checkbox_states();
+        let checked: Vec<PathBuf> = states.into_iter()
+            .filter(|(_, checked)| *checked)
+            .map(|(path, _)| path)
+            .collect();
 
-    let preset = Preset::new(name, root, paths);
+        if checked.is_empty() {
+            ui.toast.error("No files selected to save");
+            return Cmd::None;
+        }
+
+        Some(checked)
+    } else {
+        None
+    };
+
+    let query = if include_search && model.search.has_query() {
+        Some(model.search.query.clone())
+    } else {
+        None
+    };
+
+    let root = if generic {
+        None
+    } else {
+        model.tree.nodes.first().map(|n| n.path.clone())
+    };
+
+    let preset = Preset::new(name, root, paths, query);
     model.presets.add(preset);
 
     let _ = model.presets.save_to_disk();
@@ -79,22 +107,28 @@ fn handle_saved(model: &mut Model, ui: &mut UiState, name: String) -> Cmd {
 }
 
 fn handle_loaded(model: &mut Model, ui: &mut UiState, id: String) -> Cmd {
-    let paths = match model.presets.get(&id) {
-        Some(preset) => preset.paths.clone(),
+    let preset = match model.presets.get(&id) {
+        Some(p) => p.clone(),
         None => {
             ui.toast.error("Preset not found");
             return Cmd::None;
         }
     };
 
-    uncheck_all(&mut model.tree.nodes);
+    if let Some(ref paths) = preset.paths {
+        uncheck_all(&mut model.tree.nodes);
 
-    let states: HashMap<PathBuf, bool> = paths.into_iter()
-        .map(|p| (p, true))
-        .collect();
+        let states: FxHashMap<PathBuf, bool> = paths.iter()
+            .map(|p| (p.clone(), true))
+            .collect();
 
-    model.tree.restore_checkbox_states(&states);
-    model.tree.update_file_count();
+        model.tree.restore_checkbox_states(&states);
+        model.tree.update_file_count();
+    }
+
+    if let Some(ref query) = preset.query {
+        model.search.set_query(query.clone());
+    }
 
     sync_to_active_session(model);
 

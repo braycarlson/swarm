@@ -50,10 +50,10 @@ impl Runtime {
     }
 
     pub fn load_sessions(&self) -> SessionsModel {
-        if let Some(dir) = self.get_sessions_directory()
-            && let Ok(entries) = std::fs::read_dir(dir) {
-                let mut sessions = SessionsModel::new();
+        let mut sessions = SessionsModel::new();
 
+        if let Some(dir) = self.get_sessions_directory() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
 
@@ -64,14 +64,29 @@ impl Runtime {
                             }
                 }
 
-                if let Some((first_id, _)) = sessions.sessions.iter().next() {
-                    sessions.active_id = Some(first_id.clone());
+                if !sessions.sessions.is_empty() {
+                    let saved_active_id = self.load_active_session_id(&dir);
+
+                    if let Some(ref id) = saved_active_id {
+                        if sessions.sessions.contains_key(id) {
+                            sessions.active_id = Some(id.clone());
+                        }
+                    }
+
+                    if sessions.active_id.is_none() {
+                        sessions.active_id = sessions.sessions.values()
+                            .max_by_key(|s| s.last_modified)
+                            .map(|s| s.id.clone());
+                    }
                 }
-
-                return sessions;
             }
+        }
 
-        SessionsModel::new()
+        if let Some(last) = self.load_last_session() {
+            sessions.last_closed_session = Some(last);
+        }
+
+        sessions
     }
 
     pub fn execute(&mut self, cmd: Cmd) {
@@ -80,13 +95,12 @@ impl Runtime {
                 self.session_loader.start_loading(path, (*options).clone());
             }
 
-            Cmd::RefreshTree { nodes, options } => {
-                let mut refreshed = nodes.clone();
-                for node in &mut refreshed {
+            Cmd::RefreshTree { mut nodes, options } => {
+                for node in &mut nodes {
                     let _ = node.refresh(&options);
                 }
 
-                self.tree_loader.start_load(refreshed, (*options).clone());
+                self.tree_loader.start_load(nodes, (*options).clone());
             }
 
             Cmd::GatherFiles { paths, options, git, query } => {
@@ -112,8 +126,8 @@ impl Runtime {
                 self.execute_propagate_with_load(nodes, path, checked, options, search, git);
             }
 
-            Cmd::StartExpensiveFilter { nodes, query, git } => {
-                self.filter_worker.start_filter(nodes, query, git);
+            Cmd::StartExpensiveFilter { entries, query, git } => {
+                self.filter_worker.start_filter(entries, query, git);
             }
 
             Cmd::CancelFilter => {
@@ -156,13 +170,45 @@ impl Runtime {
                     let _ = std::fs::write(path, json);
                 }
             }
+
+            if let Some(ref active_id) = sessions.active_id {
+                let active_path = dir.join("active");
+                let _ = std::fs::write(active_path, active_id);
+            }
         }
+    }
+
+    pub fn save_last_session(&self, session: &SessionData) {
+        if let Some(dir) = self.get_app_directory() {
+            let _ = std::fs::create_dir_all(&dir);
+            let path = dir.join("last_session.json");
+
+            if let Ok(json) = serde_json::to_string_pretty(session) {
+                let _ = std::fs::write(path, json);
+            }
+        }
+    }
+
+    fn load_last_session(&self) -> Option<SessionData> {
+        let dir = self.get_app_directory()?;
+        let path = dir.join("last_session.json");
+        let content = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&content).ok()
+    }
+
+    fn get_app_directory(&self) -> Option<PathBuf> {
+        dirs::data_local_dir().map(|dir| dir.join(APP_NAME.to_lowercase()))
     }
 
     fn get_sessions_directory(&self) -> Option<PathBuf> {
         dirs::data_local_dir().map(|dir| {
             dir.join(APP_NAME.to_lowercase()).join("sessions")
         })
+    }
+
+    fn load_active_session_id(&self, sessions_dir: &PathBuf) -> Option<String> {
+        let path = sessions_dir.join("active");
+        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
     }
 
     fn poll_session_loader(&self) -> Vec<Msg> {

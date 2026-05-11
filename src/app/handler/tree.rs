@@ -23,6 +23,9 @@ pub fn handle(model: &mut Model, ui: &mut UiState, msg: Tree) -> Cmd {
         Tree::PropagateFailed(error) => handle_propagate_failed(error),
         Tree::BackgroundLoadProgress { loaded, total } => { handle_background_load_progress(model, loaded, total) }
         Tree::BackgroundLoadCompleted(nodes) => { handle_background_load_completed(model, nodes) }
+        Tree::BulkSelectToggled => handle_bulk_select_toggled(ui),
+        Tree::BulkSelectTextChanged(text) => handle_bulk_select_text_changed(ui, text),
+        Tree::BulkSelectApplied => handle_bulk_select_applied(model, ui),
     }
 }
 
@@ -38,9 +41,11 @@ fn handle_tree_refresh_requested(model: &mut Model, _ui: &mut UiState) -> Cmd {
         progress: (0, 0),
     };
 
+    let nodes = std::mem::take(&mut model.tree.nodes);
+
     let builder = CmdBuilder::new()
         .add(Cmd::RefreshTree {
-            nodes: model.tree.nodes.clone(),
+            nodes,
             options: Arc::clone(&model.options),
         });
 
@@ -92,8 +97,10 @@ fn handle_tree_node_toggled(model: &mut Model, path: Vec<usize>, checked: bool, 
             progress: (0, 0),
         };
 
+        let nodes = std::mem::take(&mut model.tree.nodes);
+
         return Cmd::PropagateCheckedWithLoad {
-            nodes: model.tree.nodes.clone(),
+            nodes,
             path: path_u32,
             checked,
             options: Arc::clone(&model.options),
@@ -292,4 +299,76 @@ fn set_all_checked(nodes: &mut [FileNode], checked: bool) {
         node.checked = checked;
         set_all_checked(&mut node.children, checked);
     }
+}
+
+fn handle_bulk_select_toggled(ui: &mut UiState) -> Cmd {
+    ui.show_bulk_select = !ui.show_bulk_select;
+
+    if !ui.show_bulk_select {
+        ui.bulk_select_text.clear();
+    }
+
+    Cmd::None
+}
+
+fn handle_bulk_select_text_changed(ui: &mut UiState, text: String) -> Cmd {
+    ui.bulk_select_text = text;
+    Cmd::None
+}
+
+fn handle_bulk_select_applied(model: &mut Model, ui: &mut UiState) -> Cmd {
+    let paths: Vec<String> = ui.bulk_select_text
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .map(|line| line.replace('\\', "/"))
+        .collect();
+
+    if paths.is_empty() {
+        return Cmd::None;
+    }
+
+    set_all_checked(&mut model.tree.nodes, false);
+    bulk_select_recursive(&mut model.tree.nodes, &paths);
+    model.tree.update_file_count();
+    sync_to_active_session(model);
+
+    let count = count_checked(&model.tree.nodes);
+    ui.toast.success(format!("{} files selected", count));
+    ui.show_bulk_select = false;
+    ui.bulk_select_text.clear();
+
+    Cmd::None
+}
+
+fn bulk_select_recursive(nodes: &mut [FileNode], paths: &[String]) {
+    for node in nodes {
+        let node_path = node.path.to_string_lossy().replace('\\', "/");
+
+        if node.is_file() && paths.iter().any(|p| node_path.ends_with(p)) {
+            node.checked = true;
+        }
+
+        if node.is_directory() {
+            bulk_select_recursive(&mut node.children, paths);
+
+            if node.children.iter().any(|c| c.checked) {
+                node.checked = true;
+            }
+        }
+    }
+}
+
+fn count_checked(nodes: &[FileNode]) -> usize {
+    let mut count = 0;
+
+    for node in nodes {
+        if node.is_file() && node.checked {
+            count += 1;
+        }
+
+        count += count_checked(&node.children);
+    }
+
+    count
 }

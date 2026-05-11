@@ -1,12 +1,19 @@
 use std::fs;
 
+use rayon::prelude::*;
+
 use crate::model::error::SwarmResult;
-use crate::model::node::FileNode;
+use crate::model::node::{FileNode, NodeKind};
 use crate::model::options::Options;
 use crate::model::path::PathExtensions;
-use crate::services::tree::filter;
+use crate::services::filesystem::filter::{GlobPathFilter, PathFilter};
 
 pub fn load_children(node: &mut FileNode, options: &Options) -> SwarmResult<bool> {
+    let filter = GlobPathFilter::from_options(options)?;
+    load_children_with_filter(node, options, &filter)
+}
+
+fn load_children_with_filter(node: &mut FileNode, options: &Options, filter: &GlobPathFilter) -> SwarmResult<bool> {
     if node.is_file() {
         return Ok(true);
     }
@@ -27,42 +34,55 @@ pub fn load_children(node: &mut FileNode, options: &Options) -> SwarmResult<bool
             continue;
         }
 
-        if filter::is_path_in_excluded_patterns(&child_path, &options.exclude) {
+        if !filter.should_include(&child_path) {
             continue;
         }
 
-        if child_path.is_dir() {
-            let child_node = FileNode::new(child_path);
-            directories.push(child_node);
-            continue;
-        }
+        let file_type = entry.file_type()?;
+        let kind = if file_type.is_dir() {
+            NodeKind::Directory
+        } else {
+            NodeKind::File
+        };
 
-        if filter::should_include_path(&child_path, options) {
-            files.push(FileNode::new(child_path));
+        let child = FileNode::with_kind(child_path, kind);
+
+        if kind == NodeKind::Directory {
+            directories.push(child);
+        } else {
+            files.push(child);
         }
     }
 
-    directories.sort_by_key(|node| node.lowercase_name());
-    files.sort_by_key(|node| node.lowercase_name());
+    directories.sort_by(|a, b| a.name_lower().cmp(b.name_lower()));
+    files.sort_by(|a, b| a.name_lower().cmp(b.name_lower()));
 
-    node.children = directories;
-    node.children.extend(files);
+    let mut combined = Vec::with_capacity(directories.len() + files.len());
+    combined.append(&mut directories);
+    combined.append(&mut files);
+    node.children = combined;
 
     Ok(node.has_children())
 }
 
 pub fn load_all_children(node: &mut FileNode, options: &Options) -> SwarmResult<bool> {
+    let filter = GlobPathFilter::from_options(options)?;
+    load_all_children_with_filter(node, options, &filter)
+}
+
+fn load_all_children_with_filter(node: &mut FileNode, options: &Options, filter: &GlobPathFilter) -> SwarmResult<bool> {
     if node.is_file() {
         return Ok(true);
     }
 
-    let has_visible_content = load_children(node, options)?;
+    let has_visible_content = load_children_with_filter(node, options, filter)?;
 
-    for child in &mut node.children {
-        if child.is_directory() {
-            load_all_children(child, options)?;
-        }
-    }
+    node.children
+        .par_iter_mut()
+        .filter(|child| child.is_directory())
+        .for_each(|child| {
+            let _ = load_all_children_with_filter(child, options, filter);
+        });
 
     Ok(has_visible_content)
 }

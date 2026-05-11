@@ -7,15 +7,15 @@ use crate::app::state::{LoadStatus, Model, UiState};
 use crate::app::state::ui::GenerateMode;
 
 pub fn render(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     model: &Model,
     ui_state: &UiState,
     sender: &Sender<Msg>,
 ) {
-    egui::TopBottomPanel::bottom("bottom_panel")
-        .min_height(40.0)
+    egui::Panel::bottom("bottom_panel")
+        .min_size(40.0)
         .resizable(false)
-        .show(ctx, |ui| {
+        .show_inside(ui, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(10.0);
 

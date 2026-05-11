@@ -4,20 +4,75 @@ use eframe::egui;
 
 use crate::app::message::{Msg, Preset_};
 use crate::app::state::{Model, UiState};
+use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rect};
 
 pub fn render_save(ctx: &egui::Context, ui_state: &UiState, sender: &Sender<Msg>) {
     let center = ctx.content_rect().center();
+    let title_bar_height = 32.0;
+    let button_width = 46.0;
 
-    let mut open = true;
-
-    egui::Window::new(egui::RichText::new("Save Preset").size(14.0))
+    egui::Window::new("save_preset")
+        .title_bar(false)
         .resizable(false)
-        .fixed_size([300.0, 100.0])
+        .fixed_size([420.0, 350.0])
         .collapsible(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .current_pos(center)
-        .open(&mut open)
         .show(ctx, |ui| {
+            let content_rect = ui.max_rect();
+
+            let title_rect = egui::Rect::from_min_size(
+                content_rect.min,
+                egui::vec2(content_rect.width(), title_bar_height),
+            );
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), title_bar_height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_height(title_bar_height);
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("Save Preset").size(14.0));
+                }
+            );
+
+            let close_rect = egui::Rect::from_min_size(
+                title_rect.right_top() - egui::vec2(button_width, 0.0),
+                egui::vec2(button_width, title_bar_height),
+            );
+
+            let close_response = ui.interact(
+                close_rect,
+                ui.id().with("save_preset_close"),
+                egui::Sense::click(),
+            );
+
+            if close_response.hovered() {
+                let p = ui.painter().with_clip_rect(title_rect);
+                p.rect_filled(
+                    hover_rect(close_rect, title_rect),
+                    0.0,
+                    egui::Color32::from_rgb(232, 17, 35),
+                );
+            }
+
+            {
+                let fg = if close_response.hovered() {
+                    egui::Color32::WHITE
+                } else {
+                    ui.visuals().text_color()
+                };
+
+                let p = ui.painter().with_clip_rect(title_rect);
+                draw_title_icon(&p, close_rect, TitleIcon::Close, fg);
+            }
+
+            if close_response.clicked() {
+                sender.send(Msg::Preset(Preset_::SaveDialogClosed)).ok();
+            }
+
+            ui.separator();
+
             ui.vertical(|ui| {
                 ui.label("Preset name:");
 
@@ -33,10 +88,28 @@ pub fn render_save(ctx: &egui::Context, ui_state: &UiState, sender: &Sender<Msg>
 
                 response.request_focus();
 
+                ui.add_space(12.0);
+
+                let mut include_selection = ui_state.preset_include_selection;
+                if ui.checkbox(&mut include_selection, "Include selection").clicked() {
+                    sender.send(Msg::Preset(Preset_::IncludeSelectionChanged(include_selection))).ok();
+                }
+
+                let mut include_search = ui_state.preset_include_search;
+                if ui.checkbox(&mut include_search, "Include search/filter").clicked() {
+                    sender.send(Msg::Preset(Preset_::IncludeSearchChanged(include_search))).ok();
+                }
+
+                let mut generic = ui_state.preset_generic;
+                if ui.checkbox(&mut generic, "Generic (available in any project)").clicked() {
+                    sender.send(Msg::Preset(Preset_::GenericChanged(generic))).ok();
+                }
+
                 ui.add_space(8.0);
 
                 ui.horizontal(|ui| {
-                    let can_save = !name.trim().is_empty();
+                    let can_save = !name.trim().is_empty()
+                        && (include_selection || include_search);
 
                     let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
 
@@ -52,125 +125,121 @@ pub fn render_save(ctx: &egui::Context, ui_state: &UiState, sender: &Sender<Msg>
                 });
             });
         });
-
-    if !open {
-        sender.send(Msg::Preset(Preset_::SaveDialogClosed)).ok();
-    }
 }
 
 pub fn render_load(ctx: &egui::Context, model: &Model, sender: &Sender<Msg>) {
     let center = ctx.content_rect().center();
-
-    let mut open = true;
+    let title_bar_height = 32.0;
+    let button_width = 46.0;
 
     let current_root = model.tree.nodes.first().map(|n| &n.path);
+    let presets = model.presets.list_for_root(current_root);
 
-    let presets: Vec<_> = model.presets.list()
-        .into_iter()
-        .filter(|p| current_root.is_some_and(|root| *root == p.root))
-        .collect();
-
-    egui::Window::new(egui::RichText::new("Load Preset").size(14.0))
+    egui::Window::new("load_preset")
+        .title_bar(false)
         .resizable(false)
         .fixed_size([420.0, 300.0])
         .collapsible(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .current_pos(center)
-        .open(&mut open)
         .show(ctx, |ui| {
+            let content_rect = ui.max_rect();
+
+            let title_rect = egui::Rect::from_min_size(
+                content_rect.min,
+                egui::vec2(content_rect.width(), title_bar_height),
+            );
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), title_bar_height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_height(title_bar_height);
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("Load Preset").size(14.0));
+                }
+            );
+
+            let close_rect = egui::Rect::from_min_size(
+                title_rect.right_top() - egui::vec2(button_width, 0.0),
+                egui::vec2(button_width, title_bar_height),
+            );
+
+            let close_response = ui.interact(
+                close_rect,
+                ui.id().with("load_preset_close"),
+                egui::Sense::click(),
+            );
+
+            if close_response.hovered() {
+                let p = ui.painter().with_clip_rect(title_rect);
+                p.rect_filled(
+                    hover_rect(close_rect, title_rect),
+                    0.0,
+                    egui::Color32::from_rgb(232, 17, 35),
+                );
+            }
+
+            {
+                let fg = if close_response.hovered() {
+                    egui::Color32::WHITE
+                } else {
+                    ui.visuals().text_color()
+                };
+
+                let p = ui.painter().with_clip_rect(title_rect);
+                draw_title_icon(&p, close_rect, TitleIcon::Close, fg);
+            }
+
+            if close_response.clicked() {
+                sender.send(Msg::Preset(Preset_::LoadDialogClosed)).ok();
+            }
+
+            ui.separator();
+
             ui.vertical(|ui| {
+                let available_height = ui.available_height();
+
                 egui::Frame::dark_canvas(ui.style())
                     .fill(ui.visuals().extreme_bg_color)
                     .inner_margin(8.0)
                     .stroke(egui::Stroke::NONE)
                     .show(ui, |ui| {
+                        ui.set_min_height(available_height - 16.0);
+
                         if presets.is_empty() {
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(80.0);
-                                ui.label("No presets for this project.");
-                            });
-                            return;
-                        }
+                            let available = ui.available_size();
 
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .max_height(210.0)
-                            .show(ui, |ui| {
-                                for preset in &presets {
-                                    let id = ui.make_persistent_id(&preset.id);
-
-                                    let response = ui.push_id(id, |ui| {
-                                        let (rect, response) = ui.allocate_exact_size(
-                                            egui::vec2(ui.available_width(), 36.0),
-                                            egui::Sense::click(),
-                                        );
-
-                                        let visuals = if response.hovered() {
-                                            ui.visuals().widgets.hovered
-                                        } else {
-                                            ui.visuals().widgets.inactive
-                                        };
-
-                                        if response.hovered() {
-                                            ui.painter().rect_filled(
-                                                rect,
-                                                4.0,
-                                                visuals.weak_bg_fill,
-                                            );
-                                        }
-
-                                        let text_rect = rect.shrink2(egui::vec2(8.0, 0.0));
-
-                                        ui.painter().text(
-                                            text_rect.left_center(),
-                                            egui::Align2::LEFT_CENTER,
-                                            &preset.name,
-                                            egui::FontId::proportional(13.0),
-                                            if response.hovered() {
-                                                visuals.fg_stroke.color
-                                            } else {
-                                                ui.visuals().text_color()
-                                            },
-                                        );
-
-                                        let count_text = format!("{} files", preset.paths.len());
-
-                                        ui.painter().text(
-                                            text_rect.right_center() - egui::vec2(52.0, 0.0),
-                                            egui::Align2::RIGHT_CENTER,
-                                            &count_text,
-                                            egui::FontId::proportional(11.0),
-                                            ui.visuals().weak_text_color(),
-                                        );
-
-                                        response
-                                    }).inner;
-
-                                    if response.clicked() {
-                                        sender.send(Msg::Preset(Preset_::Loaded(preset.id.clone()))).ok();
-                                    }
-
-                                    response.context_menu(|ui| {
-                                        if ui.button("Delete").clicked() {
-                                            sender.send(Msg::Preset(Preset_::Deleted(preset.id.clone()))).ok();
-                                            ui.close();
-                                        }
-                                    });
+                            ui.allocate_ui_with_layout(
+                                available,
+                                egui::Layout::top_down(egui::Align::Center),
+                                |ui| {
+                                    let space_above = (available.y - 20.0) / 2.0;
+                                    ui.add_space(space_above.max(0.0));
+                                    ui.label("No presets available.");
                                 }
-                            });
+                            );
+                        } else {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false, false])
+                                .show(ui, |ui| {
+                                    for preset in &presets {
+                                        let response = ui.selectable_label(false, &preset.name);
+
+                                        if response.clicked() {
+                                            sender.send(Msg::Preset(Preset_::Loaded(preset.id.clone()))).ok();
+                                        }
+
+                                        response.context_menu(|ui| {
+                                            if ui.button("Delete").clicked() {
+                                                sender.send(Msg::Preset(Preset_::Deleted(preset.id.clone()))).ok();
+                                                ui.close();
+                                            }
+                                        });
+                                    }
+                                });
+                        }
                     });
-
-                ui.add_space(ui.available_height() - 35.0);
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
-                        sender.send(Msg::Preset(Preset_::LoadDialogClosed)).ok();
-                    }
-                });
             });
         });
-
-    if !open {
-        sender.send(Msg::Preset(Preset_::LoadDialogClosed)).ok();
-    }
 }

@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use git2::{Repository, Status, StatusOptions};
+use rustc_hash::FxHashMap;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum GitStatus {
@@ -24,7 +24,7 @@ impl GitStatus {
 
 #[derive(Clone)]
 pub struct GitService {
-    statuses: HashMap<PathBuf, GitStatus>,
+    statuses: FxHashMap<PathBuf, GitStatus>,
     repo_root: Option<PathBuf>,
 }
 
@@ -37,7 +37,7 @@ impl Default for GitService {
 impl GitService {
     pub fn new() -> Self {
         Self {
-            statuses: HashMap::new(),
+            statuses: FxHashMap::default(),
             repo_root: None,
         }
     }

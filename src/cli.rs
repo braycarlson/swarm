@@ -5,6 +5,7 @@ use std::process;
 use clap::{Parser, ValueEnum};
 use copypasta::{ClipboardContext, ClipboardProvider};
 
+use crate::app::state::search::{Command, ParsedQuery};
 use crate::model::options::Options;
 use crate::model::output::OutputFormat;
 use crate::services::filesystem::gather::GatherService;
@@ -127,7 +128,8 @@ fn output_result(output: &str, cli: &Cli) {
                     process::exit(1);
                 }
 
-                eprintln!("Copied to clipboard ({} lines)", output.lines().count());
+                let line_count = memchr::memchr_iter(b'\n', output.as_bytes()).count();
+                eprintln!("Copied to clipboard ({} lines)", line_count);
             }
             Err(error) => {
                 eprintln!("Error: failed to access clipboard: {}", error);
@@ -141,7 +143,7 @@ fn run_skeleton(path: &Path, options: &Options, cli: &Cli) -> String {
     let mut override_options = options.clone();
 
     if let Some(ref search) = cli.search {
-        let query = crate::app::state::search::ParsedQuery::parse(search);
+        let query = ParsedQuery::parse(search);
 
         if let Some(format) = query.format_override {
             override_options.output_format = format;
@@ -179,13 +181,7 @@ fn run_gather(path: &Path, options: &Options, cli: &Cli) -> String {
     let mut git = GitService::new();
     git.refresh(path);
 
-    let query_string = build_query_string(cli);
-
-    let query = if query_string.is_empty() {
-        crate::app::state::search::ParsedQuery::default()
-    } else {
-        crate::app::state::search::ParsedQuery::parse(&query_string)
-    };
+    let query = build_parsed_query(cli);
 
     let mut override_options = options.clone();
 
@@ -208,18 +204,17 @@ fn run_gather(path: &Path, options: &Options, cli: &Cli) -> String {
     }
 }
 
-fn build_query_string(cli: &Cli) -> String {
-    let mut parts = Vec::new();
-
-    if let Some(ref search) = cli.search {
-        parts.push(search.clone());
-    }
+fn build_parsed_query(cli: &Cli) -> ParsedQuery {
+    let mut query = match cli.search {
+        Some(ref s) if !s.is_empty() => ParsedQuery::parse(s),
+        _ => ParsedQuery::default(),
+    };
 
     if cli.diff {
-        parts.push("--diff".to_string());
+        query.commands.push(Command::Diff);
     }
 
-    parts.join(" ")
+    query
 }
 
 fn normalize_path(path: &Path) -> PathBuf {

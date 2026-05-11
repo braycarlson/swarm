@@ -11,6 +11,7 @@ const MAX_IPC_PATHS: u32 = 100;
 pub fn handle(model: &mut Model, ui: &mut UiState, msg: App) -> Cmd {
     match msg {
         App::Initialized => handle_app_initialized(model),
+        App::RestoreLastSession => handle_restore_last_session(model),
         App::FileDialogOpened => Cmd::None,
         App::PathSelected(path) => handle_path_selected(model, ui, path),
         App::PathsReceivedFromIpc(paths) => handle_paths_from_ipc(model, ui, paths),
@@ -27,6 +28,40 @@ fn handle_app_initialized(model: &mut Model) -> Cmd {
 
     let builder = CmdBuilder::new();
     builder.build()
+}
+
+fn handle_restore_last_session(model: &mut Model) -> Cmd {
+    if let Some(closed) = model.sessions.last_closed_session.take() {
+        let id = closed.id.clone();
+
+        model.tree = closed.tree_state.clone();
+        model.search = closed.search_state.clone();
+        model.tree.load_status = LoadStatus::Loaded;
+
+        model.sessions.sessions.insert(id.clone(), closed);
+        model.sessions.active_id = Some(id);
+
+        model.refresh_git_status();
+
+        return Cmd::None;
+    }
+
+    let most_recent_id = model.sessions.sessions.values()
+        .filter(|s| !s.tree_state.nodes.is_empty())
+        .max_by_key(|s| s.last_modified)
+        .map(|s| s.id.clone());
+
+    if let Some(id) = most_recent_id {
+        if let Some(session) = model.sessions.select_session(id) {
+            model.tree = session.tree_state.clone();
+            model.search = session.search_state.clone();
+            model.tree.load_status = LoadStatus::Loaded;
+
+            model.refresh_git_status();
+        }
+    }
+
+    Cmd::None
 }
 
 fn handle_path_selected(model: &mut Model, ui: &mut UiState, path: PathBuf) -> Cmd {

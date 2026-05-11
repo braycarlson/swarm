@@ -9,15 +9,15 @@ use crate::app::state::{Model, UiState};
 use crate::constants::APP_NAME;
 
 pub fn render(
-    ctx: &egui::Context,
+    ui: &mut egui::Ui,
     model: &Model,
     ui_state: &UiState,
     sender: &Sender<Msg>,
 ) {
-    egui::TopBottomPanel::top("top_panel")
-        .min_height(60.0)
+    egui::Panel::top("top_panel")
+        .min_size(60.0)
         .resizable(false)
-        .show(ctx, |ui| {
+        .show_inside(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     let can_open = true;
@@ -38,6 +38,13 @@ pub fn render(
 
                     if ui.button("New Session").clicked() {
                         sender.send(Msg::Session(Session::Created("Session".to_string()))).ok();
+                        ui.close();
+                    }
+
+                    let has_restorable = model.sessions.has_restorable_session();
+
+                    if ui.add_enabled(has_restorable, egui::Button::new("Restore Last Session")).clicked() {
+                        sender.send(Msg::App(App::RestoreLastSession)).ok();
                         ui.close();
                     }
 

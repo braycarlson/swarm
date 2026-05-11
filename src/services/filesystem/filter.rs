@@ -67,14 +67,12 @@ impl GlobPathFilter {
             return true;
         }
 
-        let mut current = path;
-
-        while let Some(parent) = current.parent() {
-            if self.exclude_set.is_match(parent) {
-                return true;
+        for component in path.components() {
+            if let std::path::Component::Normal(name) = component {
+                if self.exclude_set.is_match(Path::new(name)) {
+                    return true;
+                }
             }
-
-            current = parent;
         }
 
         false
@@ -83,29 +81,21 @@ impl GlobPathFilter {
 
 impl PathFilter for GlobPathFilter {
     fn should_include(&self, path: &Path) -> bool {
-        if path.is_dir() {
-            return !self.is_path_excluded(path);
-        }
-
-        if crate::services::tree::filter::is_binary_file(path) {
+        if self.is_path_excluded(path) {
             return false;
         }
 
-        let include_empty = self.include_set.is_empty();
-
-        if !include_empty {
-            if !self.include_set.is_match(path) {
-                return false;
-            }
-
-            if self.is_path_excluded(path) {
-                return false;
-            }
-
+        if path.is_dir() {
             return true;
         }
 
-        !self.is_path_excluded(path)
+        if self.include_set.is_empty() {
+            return true;
+        }
+
+        self.include_set.is_match(path)
+            || path.file_name()
+                .is_some_and(|name| self.include_set.is_match(Path::new(name)))
     }
 }
 

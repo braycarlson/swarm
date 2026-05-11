@@ -1,18 +1,34 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
+use rayon::prelude::*;
+use rustc_hash::FxHashSet;
+
 use crate::app::state::search::{FileMetadata, ParsedQuery};
 use crate::model::node::FileNode;
 use crate::services::filesystem::git::GitService;
+use crate::services::search::{build_content_matchers, content_matches, symbol_matches};
 
 use super::core::{Worker, WorkerTask};
 
+pub struct FilterEntry {
+    pub path: PathBuf,
+    pub path_lower: Arc<str>,
+    pub name_offset: u32,
+    pub metadata: Option<FileMetadata>,
+}
+
+impl FilterEntry {
+    pub fn name_lower(&self) -> &str {
+        &self.path_lower[self.name_offset as usize..]
+    }
+}
+
 pub enum FilterCommand {
     Filter {
-        nodes: Vec<FileNode>,
+        entries: Vec<FilterEntry>,
         query: ParsedQuery,
         git: GitService,
     },
@@ -22,7 +38,7 @@ pub enum FilterCommand {
 pub enum FilterResult {
     Started,
     Progress(usize, usize),
-    Complete(HashSet<PathBuf>),
+    Complete(FxHashSet<PathBuf>),
     Cancelled,
 }
 
@@ -37,134 +53,91 @@ impl FilterTask {
         }
     }
 
-    fn filter_nodes(
-        nodes: &[FileNode],
+    fn filter_entries(
+        entries: &[FilterEntry],
         query: &ParsedQuery,
         git: &GitService,
         result_sender: &Sender<FilterResult>,
         is_running: &Arc<AtomicBool>,
-    ) -> HashSet<PathBuf> {
-        let mut matching_paths = HashSet::new();
-        let mut processed: usize = 0;
-        let total = Self::count_files(nodes);
+    ) -> FxHashSet<PathBuf> {
+        let total = entries.len();
+        let _ = result_sender.send(FilterResult::Progress(0, total));
 
-        Self::filter_recursive(
-            nodes,
-            query,
-            git,
-            0,
-            &mut matching_paths,
-            result_sender,
-            &mut processed,
-            total,
-            is_running,
-        );
+        let content_matchers = build_content_matchers(&query.content_patterns);
 
-        matching_paths
-    }
-
-    fn filter_recursive(
-        nodes: &[FileNode],
-        query: &ParsedQuery,
-        git: &GitService,
-        depth: usize,
-        matching_paths: &mut HashSet<PathBuf>,
-        result_sender: &Sender<FilterResult>,
-        processed: &mut usize,
-        total: usize,
-        is_running: &Arc<AtomicBool>,
-    ) {
-        for node in nodes {
-            if !is_running.load(Ordering::Relaxed) {
-                return;
-            }
-
-            if node.is_directory() {
-                if query.has_depth_filter() && !query.matches_depth(depth) {
-                    continue;
+        let matching_files: FxHashSet<PathBuf> = entries
+            .par_iter()
+            .filter(|entry| {
+                if !is_running.load(Ordering::Relaxed) {
+                    return false;
                 }
 
-                Self::filter_recursive(
-                    &node.children,
-                    query,
-                    git,
-                    depth + 1,
-                    matching_paths,
-                    result_sender,
-                    processed,
-                    total,
-                    is_running,
-                );
+                Self::entry_matches(entry, query, git, &content_matchers)
+            })
+            .map(|entry| entry.path.clone())
+            .collect();
 
-                let has_matching_child = node.children.iter().any(|c| matching_paths.contains(&c.path));
-
-                if has_matching_child {
-                    matching_paths.insert(node.path.clone());
-                }
-            } else {
-                *processed += 1;
-
-                if *processed % 100 == 0 {
-                    let _ = result_sender.send(FilterResult::Progress(*processed, total));
-                }
-
-                if Self::file_matches(node, query, git) {
-                    matching_paths.insert(node.path.clone());
-                }
-            }
+        if !is_running.load(Ordering::Relaxed) {
+            return FxHashSet::default();
         }
+
+        let _ = result_sender.send(FilterResult::Progress(total, total));
+
+        matching_files
     }
 
-    fn file_matches(node: &FileNode, query: &ParsedQuery, git: &GitService) -> bool {
-        let name = node.file_name().unwrap_or_default();
-        let path = node.path.to_string_lossy();
-        let git_status = Some(git.get_status(&node.path));
+    fn entry_matches(
+        entry: &FilterEntry,
+        query: &ParsedQuery,
+        git: &GitService,
+        content_matchers: &[grep_regex::RegexMatcher],
+    ) -> bool {
+        let git_status = Some(git.get_status(&entry.path));
+        let metadata = Self::resolve_metadata(entry, query);
 
-        let metadata = Self::get_metadata(node, query);
+        if !query.matches_full(entry.name_lower(), &entry.path_lower, git_status, false, metadata.as_ref()) {
+            return false;
+        }
 
-        query.matches_full(&name, &path, git_status, false, metadata.as_ref())
+        if !content_matchers.is_empty() && !content_matches(&entry.path, content_matchers) {
+            return false;
+        }
+
+        if !query.symbol_patterns.is_empty()
+            && !symbol_matches(&entry.path, &query.symbol_patterns)
+        {
+            return false;
+        }
+
+        true
     }
 
-    fn get_metadata(node: &FileNode, query: &ParsedQuery) -> Option<FileMetadata> {
+    fn resolve_metadata(entry: &FilterEntry, query: &ParsedQuery) -> Option<FileMetadata> {
         if !query.needs_metadata() {
             return None;
         }
 
-        if let Some(ref cached) = node.metadata {
+        if let Some(ref cached) = entry.metadata {
             if query.needs_content() && cached.content.is_none() {
-                return FileMetadata::from_path(&node.path, true);
+                return FileMetadata::from_path(&entry.path, true);
             }
 
             if query.needs_lines() && cached.lines.is_none() {
-                return FileMetadata::from_path_with_lines(&node.path);
+                return FileMetadata::from_path_with_lines(&entry.path);
             }
 
             return Some(cached.clone());
         }
 
         if query.needs_content() {
-            return FileMetadata::from_path(&node.path, true);
+            return FileMetadata::from_path(&entry.path, true);
         }
 
         if query.needs_lines() {
-            return FileMetadata::from_path_with_lines(&node.path);
+            return FileMetadata::from_path_with_lines(&entry.path);
         }
 
-        FileMetadata::from_path_basic(&node.path)
-    }
-
-    fn count_files(nodes: &[FileNode]) -> usize {
-        let mut count: usize = 0;
-
-        for node in nodes {
-            if node.is_file() {
-                count += 1;
-            } else {
-                count += Self::count_files(&node.children);
-            }
-        }
-
-        count
+        FileMetadata::from_path_basic(&entry.path)
     }
 }
 
@@ -174,12 +147,12 @@ impl WorkerTask for FilterTask {
 
     fn process(&mut self, command: Self::Command, result_sender: &Sender<Self::Result>) {
         match command {
-            FilterCommand::Filter { nodes, query, git } => {
+            FilterCommand::Filter { entries, query, git } => {
                 self.is_running.store(true, Ordering::Relaxed);
                 let _ = result_sender.send(FilterResult::Started);
 
-                let matching = Self::filter_nodes(
-                    &nodes,
+                let matching = Self::filter_entries(
+                    &entries,
                     &query,
                     &git,
                     result_sender,
@@ -220,12 +193,12 @@ impl FilterWorker {
         Self { is_running, worker }
     }
 
-    pub fn start_filter(&self, nodes: Vec<FileNode>, query: ParsedQuery, git: GitService) -> bool {
+    pub fn start_filter(&self, entries: Vec<FilterEntry>, query: ParsedQuery, git: GitService) -> bool {
         if self.is_running.load(Ordering::Relaxed) {
             let _ = self.worker.send(FilterCommand::Cancel);
         }
 
-        self.worker.send(FilterCommand::Filter { nodes, query, git })
+        self.worker.send(FilterCommand::Filter { entries, query, git })
     }
 
     pub fn cancel(&self) {
@@ -248,4 +221,75 @@ impl Clone for FilterWorker {
             worker: self.worker.clone(),
         }
     }
+}
+
+pub fn build_filter_entries(nodes: &[FileNode], query: &ParsedQuery) -> Vec<FilterEntry> {
+    let mut entries = Vec::new();
+    collect_entries(nodes, query, 0, &mut entries);
+    entries
+}
+
+fn collect_entries(
+    nodes: &[FileNode],
+    query: &ParsedQuery,
+    depth: usize,
+    out: &mut Vec<FilterEntry>,
+) {
+    for node in nodes {
+        if node.is_directory() {
+            if query.has_depth_filter() && !query.matches_depth(depth) {
+                continue;
+            }
+
+            collect_entries(&node.children, query, depth + 1, out);
+        } else {
+            out.push(FilterEntry {
+                path: node.path.clone(),
+                path_lower: Arc::clone(&node.path_lower),
+                name_offset: node.name_offset,
+                metadata: node.metadata.clone(),
+            });
+        }
+    }
+}
+
+pub fn add_ancestor_directories(
+    nodes: &[FileNode],
+    matching: &mut FxHashSet<PathBuf>,
+    query: &ParsedQuery,
+) {
+    add_ancestors_recursive(nodes, matching, 0, query);
+}
+
+fn add_ancestors_recursive(
+    nodes: &[FileNode],
+    matching: &mut FxHashSet<PathBuf>,
+    depth: usize,
+    query: &ParsedQuery,
+) -> bool {
+    let mut any_match = false;
+
+    for node in nodes {
+        if node.is_directory() {
+            if query.has_depth_filter() && !query.matches_depth(depth) {
+                continue;
+            }
+
+            let child_matches = add_ancestors_recursive(
+                &node.children,
+                matching,
+                depth + 1,
+                query,
+            );
+
+            if child_matches {
+                matching.insert(node.path.clone());
+                any_match = true;
+            }
+        } else if matching.contains(&node.path) {
+            any_match = true;
+        }
+    }
+
+    any_match
 }

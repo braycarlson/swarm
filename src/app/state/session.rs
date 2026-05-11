@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use super::{SearchModel, TreeModel};
@@ -6,14 +6,16 @@ use super::{SearchModel, TreeModel};
 #[derive(Clone)]
 pub struct SessionsModel {
     pub active_id: Option<String>,
-    pub sessions: HashMap<String, SessionData>,
+    pub last_closed_session: Option<SessionData>,
+    pub sessions: FxHashMap<String, SessionData>,
 }
 
 impl SessionsModel {
     pub fn new() -> Self {
         Self {
             active_id: None,
-            sessions: HashMap::new(),
+            last_closed_session: None,
+            sessions: FxHashMap::default(),
         }
     }
 
@@ -36,7 +38,12 @@ impl SessionsModel {
 
     pub fn delete_session(&mut self, id: &str) -> Option<String> {
         let position = self.session_position(id);
-        self.sessions.remove(id);
+
+        if let Some(session) = self.sessions.remove(id) {
+            if !session.tree_state.nodes.is_empty() {
+                self.last_closed_session = Some(session);
+            }
+        }
 
         if self.active_id.as_ref() == Some(&id.to_string()) {
             self.active_id = self.closest_left_session(position);
@@ -53,10 +60,10 @@ impl SessionsModel {
         self.active_id.as_ref().and_then(|id| self.sessions.get_mut(id))
     }
 
-    pub fn sync_from_tree_and_search(&mut self, tree: TreeModel, search: SearchModel) {
+    pub fn sync_from_tree_and_search(&mut self, tree: &TreeModel, search: &SearchModel) {
         if let Some(session) = self.active_session_mut() {
-            session.tree_state = tree;
-            session.search_state = search;
+            session.tree_state.clone_from(tree);
+            session.search_state.clone_from(search);
             session.mark_modified();
         }
     }
@@ -72,6 +79,11 @@ impl SessionsModel {
             session.name = new_name;
             session.mark_modified();
         }
+    }
+
+    pub fn has_restorable_session(&self) -> bool {
+        self.last_closed_session.is_some()
+            || self.sessions.values().any(|s| !s.tree_state.nodes.is_empty())
     }
 
     fn session_position(&self, id: &str) -> usize {

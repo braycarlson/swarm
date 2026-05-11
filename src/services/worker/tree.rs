@@ -6,57 +6,65 @@ use crate::services::tree::traversal::Traversable;
 
 use super::core::{Worker, WorkerTask};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TreeLoadStatus {
-    Complete,
-    InProgress,
-    NotStarted,
-}
-
 pub enum TreeLoadCommand {
     Load(Vec<FileNode>, Options),
     Stop,
 }
 
 pub enum TreeLoadResult {
-    CountUpdate(usize, usize),
-    Error(String),
     LoadedTree(Vec<FileNode>),
     ProcessingPath(String),
+    CountUpdate(usize, usize),
+    Error(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TreeLoadStatus {
+    NotStarted,
+    Loading,
+    Loaded,
+    Error,
+}
+
+enum NodeOutcome {
+    Visible(FileNode),
+    NotVisible(FileNode),
 }
 
 pub struct TreeLoadTask;
 
 impl TreeLoadTask {
     fn process_tree_load(
-        mut nodes: Vec<FileNode>,
+        nodes: Vec<FileNode>,
         options: Options,
         result_sender: &Sender<TreeLoadResult>,
     ) {
-        let mut visible = Vec::new();
+        let mut visible: Vec<FileNode> = Vec::with_capacity(nodes.len());
+        let mut not_visible: Vec<FileNode> = Vec::new();
+        let mut processed_count: usize = 0;
         let mut total_count = Self::calculate_initial_count(&nodes);
 
-        let _ = result_sender.send(TreeLoadResult::CountUpdate(0, total_count));
-        let mut processed_count: usize = 0;
-
-        for node in nodes.iter_mut() {
+        for node in nodes {
             let process_result = Self::process_single_node(
                 node,
                 &options,
                 result_sender,
                 &mut processed_count,
                 &mut total_count,
-                &mut visible,
             );
 
-            if let Err(error) = process_result {
-                let _ = result_sender.send(TreeLoadResult::Error(error));
-                return;
+            match process_result {
+                Ok(NodeOutcome::Visible(n)) => visible.push(n),
+                Ok(NodeOutcome::NotVisible(n)) => not_visible.push(n),
+                Err(error) => {
+                    let _ = result_sender.send(TreeLoadResult::Error(error));
+                    return;
+                }
             }
         }
 
         if visible.is_empty() {
-            visible = nodes;
+            visible = not_visible;
         }
 
         let _ = result_sender.send(TreeLoadResult::LoadedTree(visible));
@@ -69,15 +77,14 @@ impl TreeLoadTask {
     }
 
     fn process_single_node(
-        node: &mut FileNode,
+        mut node: FileNode,
         options: &Options,
         result_sender: &Sender<TreeLoadResult>,
         processed_count: &mut usize,
         total_count: &mut usize,
-        visible: &mut Vec<FileNode>,
-    ) -> Result<(), String> {
+    ) -> Result<NodeOutcome, String> {
         if !node.is_directory() {
-            return Ok(());
+            return Ok(NodeOutcome::NotVisible(node));
         }
 
         let refresh_result = node.refresh(options);
@@ -89,7 +96,7 @@ impl TreeLoadTask {
         let has_visible = refresh_result.unwrap();
 
         if !has_visible {
-            return Ok(());
+            return Ok(NodeOutcome::NotVisible(node));
         }
 
         let load_all_result = node.load_all_children(options);
@@ -98,53 +105,35 @@ impl TreeLoadTask {
             return Err(format!("Error loading node {}", node.path.display()));
         }
 
-        let child_count = Self::count_loaded_nodes(node);
+        let child_count = Self::walk_loaded_nodes(&node, result_sender, processed_count);
         *total_count += child_count;
 
-        Self::process_loaded_nodes(node, result_sender, processed_count, *total_count);
-        visible.push(node.clone());
-
-        Ok(())
+        Ok(NodeOutcome::Visible(node))
     }
 
-    fn count_loaded_nodes(node: &FileNode) -> usize {
+    fn walk_loaded_nodes(
+        node: &FileNode,
+        result_sender: &Sender<TreeLoadResult>,
+        processed_count: &mut usize,
+    ) -> usize {
         let mut count: usize = 0;
 
         for child in &node.children {
             count += 1;
+            *processed_count += 1;
 
-            let is_loaded_dir = child.is_directory() && child.loaded;
+            if *processed_count % 50 == 0 {
+                let path_string = child.path.to_string_lossy().into_owned();
+                let _ = result_sender.send(TreeLoadResult::ProcessingPath(path_string));
+                let _ = result_sender.send(TreeLoadResult::CountUpdate(*processed_count, count));
+            }
 
-            if is_loaded_dir {
-                let child_count = Self::count_loaded_nodes(child);
-                count += child_count;
+            if child.is_directory() && child.loaded {
+                count += Self::walk_loaded_nodes(child, result_sender, processed_count);
             }
         }
 
         count
-    }
-
-    fn process_loaded_nodes(
-        node: &FileNode,
-        result_sender: &Sender<TreeLoadResult>,
-        processed_count: &mut usize,
-        total_count: usize,
-    ) {
-        for child in &node.children {
-            *processed_count += 1;
-
-            if *processed_count % 50 == 0 {
-                let path_string = child.path.to_string_lossy().to_string();
-                let _ = result_sender.send(TreeLoadResult::ProcessingPath(path_string));
-                let _ = result_sender.send(TreeLoadResult::CountUpdate(*processed_count, total_count));
-            }
-
-            let is_loaded_dir = child.is_directory() && child.loaded;
-
-            if is_loaded_dir {
-                Self::process_loaded_nodes(child, result_sender, processed_count, total_count);
-            }
-        }
     }
 }
 
@@ -187,37 +176,21 @@ impl TreeLoader {
         let result = self.worker.try_recv()?;
 
         let is_loaded_tree = matches!(result, TreeLoadResult::LoadedTree(_));
+
         if is_loaded_tree {
-            self.status = TreeLoadStatus::Complete;
+            self.status = TreeLoadStatus::Loaded;
         }
 
         Some(result)
     }
 
-    pub fn reset_status(&mut self) {
-        self.status = TreeLoadStatus::NotStarted;
-    }
-
     pub fn start_load(&mut self, nodes: Vec<FileNode>, options: Options) -> bool {
-        if self.status == TreeLoadStatus::InProgress {
-            return false;
-        }
+        self.status = TreeLoadStatus::Loading;
 
-        if self.worker.send(TreeLoadCommand::Load(nodes, options)) {
-            self.status = TreeLoadStatus::InProgress;
-            true
-        } else {
-            false
-        }
+        self.worker.send(TreeLoadCommand::Load(nodes, options))
     }
 
     pub fn status(&self) -> TreeLoadStatus {
         self.status
-    }
-}
-
-impl Drop for TreeLoader {
-    fn drop(&mut self) {
-        let _ = self.worker.send(TreeLoadCommand::Stop);
     }
 }

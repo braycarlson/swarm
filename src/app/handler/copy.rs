@@ -32,7 +32,7 @@ fn handle_copy_requested(model: &mut Model, ui: &mut UiState) -> Cmd {
     ui.copy_in_progress = true;
     model.tree.output.clear();
 
-    let query = model.search.parsed();
+    let query = model.search.parsed().into_owned();
 
     Cmd::GatherFiles {
         paths,

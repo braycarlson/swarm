@@ -1,6 +1,8 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
+
+use rayon::prelude::*;
 
 use crate::app::state::search::FileMetadata;
 use crate::model::node::FileNode;
@@ -34,33 +36,34 @@ impl BackgroundLoadTask {
         nodes: &mut [FileNode],
         options: &Options,
         result_sender: &Sender<BackgroundLoadResult>,
-        loaded: &mut usize,
+        loaded: &AtomicUsize,
         total: usize,
     ) {
-        for node in nodes {
-            if node.is_file() {
-                if node.metadata.is_none() {
-                    node.metadata = FileMetadata::from_path_with_lines(&node.path);
+        nodes.par_iter_mut().for_each_with(
+            result_sender.clone(),
+            |sender, node| {
+                if node.is_file() {
+                    if node.metadata.is_none() {
+                        node.metadata = FileMetadata::from_path_with_lines(&node.path);
+                    }
+                    return;
                 }
 
-                continue;
-            }
-
-            if node.loaded {
-                Self::load_recursively(&mut node.children, options, result_sender, loaded, total);
-                continue;
-            }
-
-            if node.load_children(options).is_ok() {
-                *loaded += 1;
-
-                if (*loaded).is_multiple_of(100) {
-                    let _ = result_sender.send(BackgroundLoadResult::Progress(*loaded, total));
+                if !node.is_directory() {
+                    return;
                 }
-            }
 
-            Self::load_recursively(&mut node.children, options, result_sender, loaded, total);
-        }
+                if !node.loaded && node.load_children(options).is_ok() {
+                    let count = loaded.fetch_add(1, Ordering::Relaxed) + 1;
+
+                    if count.is_multiple_of(100) {
+                        let _ = sender.send(BackgroundLoadResult::Progress(count, total));
+                    }
+                }
+
+                Self::load_recursively(&mut node.children, options, &*sender, loaded, total);
+            },
+        );
     }
 
     fn count_unloaded(nodes: &[FileNode]) -> usize {
@@ -92,9 +95,9 @@ impl WorkerTask for BackgroundLoadTask {
                 self.is_running.store(true, Ordering::Relaxed);
 
                 let total = Self::count_unloaded(&nodes);
-                let mut loaded: usize = 0;
+                let loaded = AtomicUsize::new(0);
 
-                Self::load_recursively(&mut nodes, &options, result_sender, &mut loaded, total);
+                Self::load_recursively(&mut nodes, &options, result_sender, &loaded, total);
 
                 self.is_running.store(false, Ordering::Relaxed);
                 let _ = result_sender.send(BackgroundLoadResult::NodesUpdated(nodes));

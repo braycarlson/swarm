@@ -19,13 +19,13 @@ impl PathExtensions for Path {
 
     fn is_hidden(&self) -> bool {
         self.file_name()
-            .map(|name| name.to_string_lossy().starts_with('.'))
+            .map(|name| name.as_encoded_bytes().first() == Some(&b'.'))
             .unwrap_or(false)
     }
 
     fn lowercase_name(&self) -> String {
         self.file_name()
-            .map(|name| name.to_string_lossy().to_lowercase())
+            .map(|name| name.to_string_lossy().to_ascii_lowercase())
             .unwrap_or_default()
     }
 }

@@ -1,6 +1,7 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use rustc_hash::FxHashSet;
 
 use crate::app::state::search::ParsedQuery;
 use crate::app::state::ui::GenerateMode;
@@ -9,6 +10,7 @@ use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::model::output::OutputFormat;
 use crate::services::filesystem::git::GitService;
+use crate::services::worker::filter::FilterEntry;
 use crate::ui::themes::Theme;
 
 #[derive(Debug)]
@@ -51,6 +53,9 @@ pub enum Tree {
     PropagateFailed(String),
     BackgroundLoadProgress { loaded: usize, total: usize },
     BackgroundLoadCompleted(Vec<FileNode>),
+    BulkSelectToggled,
+    BulkSelectTextChanged(String),
+    BulkSelectApplied,
 }
 
 #[derive(Debug, Clone)]
@@ -61,7 +66,7 @@ pub enum Search {
     DebounceTick,
     FilterStarted,
     FilterProgress(usize, usize),
-    FilterComplete(HashSet<PathBuf>),
+    FilterComplete(FxHashSet<PathBuf>),
     FilterCancelled,
 }
 
@@ -124,6 +129,9 @@ pub enum Preset_ {
     LoadDialogOpened,
     LoadDialogClosed,
     NameChanged(String),
+    IncludeSelectionChanged(bool),
+    IncludeSearchChanged(bool),
+    GenericChanged(bool),
     Saved(String),
     Loaded(String),
     Deleted(String),
@@ -132,13 +140,14 @@ pub enum Preset_ {
 #[derive(Debug, Clone)]
 pub enum App {
     Initialized,
+    RestoreLastSession,
     FileDialogOpened,
     PathSelected(PathBuf),
     PathsReceivedFromIpc(Vec<PathBuf>),
     AboutOpened,
     AboutClosed,
     Tick,
-    OpenInExplorer
+    OpenInExplorer,
 }
 
 pub enum Cmd {
@@ -158,7 +167,7 @@ pub enum Cmd {
         git: GitService,
     },
     StartExpensiveFilter {
-        nodes: Vec<FileNode>,
+        entries: Vec<FilterEntry>,
         query: ParsedQuery,
         git: GitService,
     },
@@ -183,25 +192,11 @@ impl CmdBuilder {
         self
     }
 
-    pub fn add_if(self, condition: bool, cmd: Cmd) -> Self {
-        if condition {
-            self.add(cmd)
-        } else {
-            self
-        }
-    }
-
     pub fn build(self) -> Cmd {
         match self.commands.len() {
             0 => Cmd::None,
             1 => self.commands.into_iter().next().unwrap(),
             _ => Cmd::Batch(self.commands),
         }
-    }
-}
-
-impl Default for CmdBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }

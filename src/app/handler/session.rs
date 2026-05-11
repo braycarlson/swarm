@@ -47,6 +47,10 @@ fn handle_session_selected(model: &mut Model, _ui: &mut UiState, id: String) -> 
 }
 
 fn handle_session_deleted(model: &mut Model, id: String) -> Cmd {
+    if model.sessions.active_id.as_deref() == Some(&id) {
+        sync_to_active_session(model);
+    }
+
     if let Some(new_active_id) = model.sessions.delete_session(&id) {
         if let Some(session) = model.sessions.sessions.get(&new_active_id) {
             model.tree = session.tree_state.clone();

@@ -2,7 +2,6 @@ use eframe::egui::{
     self,
     Align,
     Color32,
-    Context,
     Frame,
     Layout,
     Rect,
@@ -17,17 +16,18 @@ use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rect};
 pub struct TitleBar;
 
 impl TitleBar {
-    pub fn render(ctx: &Context) {
+    pub fn render(ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
         let title_bar_height = 32.0;
 
-        egui::TopBottomPanel::top("custom_title_bar")
+        egui::Panel::top("custom_title_bar")
             .frame(
                 Frame::default()
-                    .fill(ctx.style().visuals.window_fill)
+                    .fill(ctx.global_style().visuals.window_fill)
                     .inner_margin(0.0),
             )
-            .exact_height(title_bar_height)
-            .show(ctx, |ui| {
+            .exact_size(title_bar_height)
+            .show_inside(ui, |ui| {
                 let title_bar_rect = ui.max_rect();
 
                 let button_width = 46.0;
@@ -85,7 +85,7 @@ impl TitleBar {
 
                         ui.add_space(button_width);
 
-                        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                        let is_maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
 
                         let maximize_rect = Rect::from_min_size(
                             title_bar_rect.right_top() - vec2(button_width * 2.0, 0.0),
@@ -97,7 +97,7 @@ impl TitleBar {
 
                         if maximize_response.hovered() {
                             let p = ui.painter().with_clip_rect(title_bar_rect);
-                            p.rect_filled(hover_rect(maximize_rect, title_bar_rect), 0.0, ctx.style().visuals.widgets.hovered.weak_bg_fill);
+                            p.rect_filled(hover_rect(maximize_rect, title_bar_rect), 0.0, ctx.global_style().visuals.widgets.hovered.weak_bg_fill);
                         }
 
                         {
@@ -122,7 +122,7 @@ impl TitleBar {
 
                         if minimize_response.hovered() {
                             let p = ui.painter().with_clip_rect(title_bar_rect);
-                            p.rect_filled(hover_rect(minimize_rect, title_bar_rect), 0.0, ctx.style().visuals.widgets.hovered.weak_bg_fill);
+                            p.rect_filled(hover_rect(minimize_rect, title_bar_rect), 0.0, ctx.global_style().visuals.widgets.hovered.weak_bg_fill);
                         }
 
                         {

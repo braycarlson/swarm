@@ -1,5 +1,6 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
+
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::model::node::FileNode;
@@ -13,7 +14,7 @@ pub struct TreeModel {
     pub output: String,
     pub load_status: LoadStatus,
     #[serde(skip)]
-    pub states: Option<HashMap<PathBuf, bool>>,
+    pub states: Option<FxHashMap<PathBuf, bool>>,
     #[serde(skip)]
     pub file_count: usize,
 }
@@ -47,8 +48,8 @@ impl TreeModel {
         }
     }
 
-    pub fn collect_checkbox_states(&self) -> HashMap<PathBuf, bool> {
-        let mut states = HashMap::new();
+    pub fn collect_checkbox_states(&self) -> FxHashMap<PathBuf, bool> {
+        let mut states = FxHashMap::default();
         for node in &self.nodes {
             node.collect_checkbox_states_recursive(&mut states);
         }
@@ -59,7 +60,7 @@ impl TreeModel {
         self.nodes.iter().map(count_files_recursive).sum()
     }
 
-    pub fn restore_checkbox_states(&mut self, states: &HashMap<PathBuf, bool>) {
+    pub fn restore_checkbox_states(&mut self, states: &FxHashMap<PathBuf, bool>) {
         for node in &mut self.nodes {
             node.restore_checkbox_states_recursive(states);
         }

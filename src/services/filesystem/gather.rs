@@ -1,11 +1,12 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ignore::WalkBuilder;
+use rayon::prelude::*;
 
 use crate::app::state::search::{Command, ParsedQuery};
-use crate::model::error::{SwarmError, SwarmResult};
+use crate::model::error::SwarmResult;
 use crate::model::options::Options;
 use crate::model::path::PathExtensions;
 
@@ -51,7 +52,9 @@ impl GatherService {
             }
 
             if clean_path.is_file() {
-                Self::collect_file(&clean_path, &mut files, git_service, include_diff);
+                if let Some(entries) = Self::read_and_process(&clean_path, git_service, include_diff) {
+                    files.extend(entries);
+                }
             } else if clean_path.is_dir() {
                 Self::collect_directory(&clean_path, &mut files, &filter, git_service, include_diff)?;
             }
@@ -63,24 +66,24 @@ impl GatherService {
 
         let output = output_format.format(&files)?;
 
+        let line_count = memchr::memchr_iter(b'\n', output.as_bytes()).count();
+        let token_count = estimate_tokens(&output);
+
         let stats = GatherStats {
-            line_count: output.lines().count(),
-            token_count: estimate_tokens(&output),
+            line_count,
+            token_count,
         };
 
         Ok((output, stats))
     }
 
-    fn collect_file(
+    fn read_and_process(
         path: &Path,
-        files: &mut Vec<(String, String)>,
         git_service: Option<&GitService>,
         include_diff: bool,
-    ) {
-        let current_content = match fs::read_to_string(path) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
+    ) -> Option<Vec<(String, String)>> {
+        let current_content = fs::read_to_string(path).ok()?;
+        let mut entries = Vec::new();
 
         if include_diff {
             if let Some(git) = git_service {
@@ -88,21 +91,22 @@ impl GatherService {
 
                 if status.has_diff() {
                     if let Some(original) = git.get_original_content(path) {
-                        files.push((
+                        entries.push((
                             format!("{} (original)", path.display()),
                             original,
                         ));
-                        files.push((
+                        entries.push((
                             format!("{} (modified)", path.display()),
                             current_content,
                         ));
-                        return;
+                        return Some(entries);
                     }
                 }
             }
         }
 
-        files.push((path.display().to_string(), current_content));
+        entries.push((path.display().to_string(), current_content));
+        Some(entries)
     }
 
     fn collect_directory(
@@ -112,36 +116,70 @@ impl GatherService {
         git_service: Option<&GitService>,
         include_diff: bool,
     ) -> SwarmResult<()> {
-        let walker = Self::create_walker(directory, filter);
+        let paths = Self::walk_parallel(directory, filter);
 
-        for result in walker {
-            let entry = result.map_err(|error| {
-                SwarmError::Other(format!("Error reading directory {}: {}", directory.display(), error))
-            })?;
+        let results: Vec<Vec<(String, String)>> = paths
+            .par_iter()
+            .filter_map(|path| Self::read_and_process(path, git_service, include_diff))
+            .collect();
 
-            if entry.file_type().is_some_and(|file_type| file_type.is_file())
-                && filter.should_include(entry.path()) {
-                    Self::collect_file(entry.path(), files, git_service, include_diff);
-                }
+        for batch in results {
+            files.extend(batch);
         }
 
         Ok(())
     }
 
-    fn create_walker(directory: &Path, filter: &Arc<dyn PathFilter>) -> ignore::Walk {
-        let filter = Arc::clone(filter);
+    fn walk_parallel(directory: &Path, filter: &Arc<dyn PathFilter>) -> Vec<PathBuf> {
+        let (sender, receiver) = std::sync::mpsc::channel::<PathBuf>();
 
         WalkBuilder::new(directory)
-            .follow_links(true)
+            .follow_links(false)
             .hidden(false)
             .ignore(false)
             .git_global(false)
             .git_exclude(false)
             .require_git(false)
-            .filter_entry(move |entry| {
-                filter.should_include(entry.path())
-            })
-            .build()
+            .build_parallel()
+            .run(|| {
+                let sender = sender.clone();
+                let filter = Arc::clone(filter);
+                let mut local: Vec<PathBuf> = Vec::new();
+
+                Box::new(move |result| {
+                    match result {
+                        Ok(entry) => {
+                            if !filter.should_include(entry.path()) {
+                                if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                                    if !local.is_empty() {
+                                        for path in local.drain(..) {
+                                            let _ = sender.send(path);
+                                        }
+                                    }
+                                    return ignore::WalkState::Skip;
+                                }
+                                return ignore::WalkState::Continue;
+                            }
+
+                            if entry.file_type().is_some_and(|ft| ft.is_file()) {
+                                local.push(entry.into_path());
+
+                                if local.len() >= 64 {
+                                    for path in local.drain(..) {
+                                        let _ = sender.send(path);
+                                    }
+                                }
+                            }
+
+                            ignore::WalkState::Continue
+                        }
+                        Err(_) => ignore::WalkState::Continue,
+                    }
+                })
+            });
+
+        drop(sender);
+        receiver.iter().collect()
     }
 }
 
@@ -156,11 +194,11 @@ pub fn estimate_tokens(text: &str) -> usize {
         return 0;
     }
 
-    let char_count = text.chars().count();
-    let word_count = text.split_whitespace().count();
+    let char_count = text.len();
+    let word_count = text.split_ascii_whitespace().count();
 
     let char_estimate = char_count / 4;
-    let word_estimate = (word_count as f64 * 1.3) as usize;
+    let word_estimate = word_count * 13 / 10;
 
     (char_estimate + word_estimate) / 2
 }

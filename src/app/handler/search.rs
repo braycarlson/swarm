@@ -1,8 +1,10 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
+
+use rustc_hash::FxHashSet;
 
 use crate::app::message::{Cmd, Search};
 use crate::app::state::{FilterStatus, Model, UiState};
+use crate::services::worker::filter::{add_ancestor_directories, build_filter_entries};
 
 use super::sync_to_active_session;
 
@@ -52,9 +54,11 @@ fn handle_debounce_tick(model: &mut Model, ui: &mut UiState) -> Cmd {
         if parsed.is_expensive() && !model.tree.nodes.is_empty() {
             ui.filter_status = FilterStatus::Filtering;
 
+            let entries = build_filter_entries(&model.tree.nodes, parsed.as_ref());
+
             return Cmd::StartExpensiveFilter {
-                nodes: model.tree.nodes.clone(),
-                query: parsed,
+                entries,
+                query: parsed.into_owned(),
                 git: model.git.clone(),
             };
         }
@@ -73,8 +77,12 @@ fn handle_filter_progress(_ui: &mut UiState, _current: usize, _total: usize) -> 
     Cmd::None
 }
 
-fn handle_filter_complete(model: &mut Model, ui: &mut UiState, matching: HashSet<PathBuf>) -> Cmd {
+fn handle_filter_complete(model: &mut Model, ui: &mut UiState, mut matching: FxHashSet<PathBuf>) -> Cmd {
     model.filtered_nodes = None;
+
+    let parsed = model.search.parsed();
+    add_ancestor_directories(&model.tree.nodes, &mut matching, parsed.as_ref());
+
     model.search.matching_paths = Some(matching);
     ui.filter_status = FilterStatus::Complete;
     sync_to_active_session(model);

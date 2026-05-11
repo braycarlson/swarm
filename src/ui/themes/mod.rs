@@ -91,7 +91,7 @@ impl Theme {
 }
 
 pub fn apply_style(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
 
     style.text_styles.insert(
         egui::TextStyle::Body,
@@ -131,5 +131,5 @@ pub fn apply_style(ctx: &egui::Context) {
 
     style.spacing.indent = 0.0;
 
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }

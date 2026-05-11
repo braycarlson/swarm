@@ -6,6 +6,7 @@ use crate::app::message::{Filter, Msg, Options_};
 use crate::app::state::{Model, UiState};
 use crate::app::state::OptionsTab;
 use crate::ui::themes::Theme;
+use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rect};
 
 pub fn render(
     ctx: &egui::Context,
@@ -14,14 +15,71 @@ pub fn render(
     sender: &Sender<Msg>,
 ) {
     let center = ctx.content_rect().center();
+    let title_bar_height = 32.0;
+    let button_width = 46.0;
 
-    egui::Window::new(egui::RichText::new("Options").size(14.0))
+    egui::Window::new("options")
+        .title_bar(false)
         .resizable(false)
-        .fixed_size([500.0, 350.0])
+        .fixed_size([500.0, 425.0])
         .collapsible(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .current_pos(center)
         .show(ctx, |ui| {
+            let content_rect = ui.max_rect();
+
+            let title_rect = egui::Rect::from_min_size(
+                content_rect.min,
+                egui::vec2(content_rect.width(), title_bar_height),
+            );
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), title_bar_height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_height(title_bar_height);
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("Options").size(14.0));
+                }
+            );
+
+            let close_rect = egui::Rect::from_min_size(
+                title_rect.right_top() - egui::vec2(button_width, 0.0),
+                egui::vec2(button_width, title_bar_height),
+            );
+
+            let close_response = ui.interact(
+                close_rect,
+                ui.id().with("options_close"),
+                egui::Sense::click(),
+            );
+
+            if close_response.hovered() {
+                let p = ui.painter().with_clip_rect(title_rect);
+                p.rect_filled(
+                    hover_rect(close_rect, title_rect),
+                    0.0,
+                    egui::Color32::from_rgb(232, 17, 35),
+                );
+            }
+
+            {
+                let fg = if close_response.hovered() {
+                    egui::Color32::WHITE
+                } else {
+                    ui.visuals().text_color()
+                };
+
+                let p = ui.painter().with_clip_rect(title_rect);
+                draw_title_icon(&p, close_rect, TitleIcon::Close, fg);
+            }
+
+            if close_response.clicked() {
+                sender.send(Msg::Options(Options_::Closed)).ok();
+            }
+
+            ui.separator();
+
             ui.vertical(|ui| {
                 render_tab_bar(ui, ui_state, sender);
 
@@ -37,8 +95,6 @@ pub fn render(
                 ui.add_space(ui.available_height() - 35.0);
 
                 render_bottom_buttons(ui, ui_state, sender);
-
-                ui.add_space(3.0);
             });
         });
 }
@@ -164,7 +220,7 @@ fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<M
 
         egui::ComboBox::from_id_salt("theme_selector")
             .selected_text(model.options.theme.name())
-            .width(150.0)
+            .width(200.0)
             .show_ui(ui, |ui| {
                 for theme in Theme::all() {
                     if ui.selectable_label(model.options.theme == *theme, theme.name()).clicked() {
@@ -174,42 +230,26 @@ fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<M
             });
     });
 
-    ui.add_space(10.0);
+    ui.add_space(5.0);
 
     ui.horizontal(|ui| {
         ui.label("UI Scale:");
 
-        let mut scale = model.options.effective_ui_scale();
+        let current_scale = model.options.ui_scale.unwrap_or(1.0);
+        let mut scale = current_scale;
 
-        let response = ui.add(
-            egui::Slider::new(&mut scale, 0.8..=2.5)
+        let slider = ui.add(
+            egui::Slider::new(&mut scale, 0.5..=3.0)
                 .step_by(0.1)
                 .fixed_decimals(1)
-                .suffix("x")
         );
 
-        if response.drag_stopped() {
+        if slider.changed() {
             sender.send(Msg::Options(Options_::UiScaleChanged(scale))).ok();
         }
-    });
-
-    ui.add_space(5.0);
-
-    let scale_label = if model.options.ui_scale.is_some() {
-        "Custom scale set"
-    } else {
-        "Auto-detected based on screen resolution"
-    };
-
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(scale_label)
-                .size(11.0)
-                .color(ui.visuals().weak_text_color())
-        );
 
         if model.options.ui_scale.is_some() {
-            if ui.small_button("Reset to Auto").clicked() {
+            if ui.button("Reset").clicked() {
                 sender.send(Msg::Options(Options_::UiScaleReset)).ok();
             }
         }
@@ -218,25 +258,22 @@ fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<M
 
 #[cfg(windows)]
 fn render_integration_section(ui: &mut egui::Ui) {
-    ui.label(
-        egui::RichText::new("Integration")
-            .strong()
-            .color(ui.visuals().weak_text_color())
-    );
-
+    ui.label(egui::RichText::new("Integration").strong().color(ui.visuals().weak_text_color()));
     ui.add_space(5.0);
 
-    let mut is_registered = crate::context::is_registered();
-
-    if ui.checkbox(&mut is_registered, "Add swarm to Windows context menu").clicked() {
-        if is_registered {
+    ui.horizontal(|ui| {
+        if ui.button("Register Context Menu").clicked() {
             if let Err(e) = crate::context::register() {
                 eprintln!("Failed to register context menu: {}", e);
             }
-        } else if let Err(e) = crate::context::unregister() {
-            eprintln!("Failed to unregister context menu: {}", e);
         }
-    }
+
+        if ui.button("Unregister Context Menu").clicked() {
+            if let Err(e) = crate::context::unregister() {
+                eprintln!("Failed to unregister context menu: {}", e);
+            }
+        }
+    });
 }
 
 fn render_includes(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender: &Sender<Msg>) {
@@ -421,6 +458,8 @@ fn render_bottom_buttons(ui: &mut egui::Ui, ui_state: &UiState, sender: &Sender<
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
+                ui.set_min_height(ui.spacing().interact_size.y);
+
                 match ui_state.options_tab {
                     OptionsTab::Includes => {
                         if ui.button("Reset to Default").clicked() {
@@ -434,12 +473,6 @@ fn render_bottom_buttons(ui: &mut egui::Ui, ui_state: &UiState, sender: &Sender<
                     }
                     _ => {}
                 }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("Close").clicked() {
-                        sender.send(Msg::Options(Options_::Closed)).ok();
-                    }
-                });
             });
         });
 }

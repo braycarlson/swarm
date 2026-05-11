@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::fmt::Write as FmtWrite;
+use std::collections::BTreeMap;
+use std::fmt::Write;
 
 use serde::{Deserialize, Serialize};
 
@@ -35,45 +35,53 @@ impl OutputFormat {
 
     pub fn format(&self, files: &[(String, String)]) -> SwarmResult<String> {
         match self {
-            Self::PlainText => Self::format_plain_text(files),
-            Self::Markdown => Self::format_markdown(files),
+            Self::PlainText => Ok(Self::format_plain_text(files)),
+            Self::Markdown => Ok(Self::format_markdown(files)),
             Self::Json => Self::format_json(files),
-            Self::Xml => Self::format_xml(files),
+            Self::Xml => Ok(Self::format_xml(files)),
         }
     }
 
-    fn format_plain_text(files: &[(String, String)]) -> SwarmResult<String> {
-        let mut output = String::new();
-
-        for (path, content) in files {
-            writeln!(output, "[{}]", path)
-                .map_err(|e| SwarmError::Other(format!("Failed to write: {}", e)))?;
-            writeln!(output, "{}", content)
-                .map_err(|e| SwarmError::Other(format!("Failed to write content: {}", e)))?;
-        }
-
-        Ok(output)
+    fn estimate_plain_capacity(files: &[(String, String)]) -> usize {
+        files.iter().map(|(p, c)| p.len() + c.len() + 4).sum()
     }
 
-    fn format_markdown(files: &[(String, String)]) -> SwarmResult<String> {
-        let mut output = String::new();
+    fn estimate_markdown_capacity(files: &[(String, String)]) -> usize {
+        files.iter().map(|(p, c)| p.len() + c.len() + 16).sum()
+    }
+
+    fn estimate_xml_capacity(files: &[(String, String)]) -> usize {
+        let header = 60;
+        let per_file: usize = files.iter().map(|(p, c)| p.len() + c.len() + 80).sum();
+        header + per_file
+    }
+
+    fn format_plain_text(files: &[(String, String)]) -> String {
+        let mut output = String::with_capacity(Self::estimate_plain_capacity(files));
 
         for (path, content) in files {
-            writeln!(output, "## {}\n", path)
-                .map_err(|e| SwarmError::Other(format!("Failed to write: {}", e)))?;
-            writeln!(output, "```")
-                .map_err(|e| SwarmError::Other(format!("Failed to write: {}", e)))?;
-            writeln!(output, "{}", content)
-                .map_err(|e| SwarmError::Other(format!("Failed to write content: {}", e)))?;
-            writeln!(output, "```\n")
-                .map_err(|e| SwarmError::Other(format!("Failed to write: {}", e)))?;
+            let _ = writeln!(output, "[{}]", path);
+            let _ = writeln!(output, "{}", content);
         }
 
-        Ok(output)
+        output
+    }
+
+    fn format_markdown(files: &[(String, String)]) -> String {
+        let mut output = String::with_capacity(Self::estimate_markdown_capacity(files));
+
+        for (path, content) in files {
+            let _ = writeln!(output, "## {}\n", path);
+            let _ = writeln!(output, "```");
+            let _ = writeln!(output, "{}", content);
+            let _ = writeln!(output, "```\n");
+        }
+
+        output
     }
 
     fn format_json(files: &[(String, String)]) -> SwarmResult<String> {
-        let map: HashMap<&str, &str> = files.iter()
+        let map: BTreeMap<&str, &str> = files.iter()
             .map(|(path, content)| (path.as_str(), content.as_str()))
             .collect();
 
@@ -81,34 +89,47 @@ impl OutputFormat {
             .map_err(|e| SwarmError::Other(format!("Failed to serialize JSON: {}", e)))
     }
 
-    fn format_xml(files: &[(String, String)]) -> SwarmResult<String> {
-        let mut output = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<files>\n");
+    fn format_xml(files: &[(String, String)]) -> String {
+        let mut output = String::with_capacity(Self::estimate_xml_capacity(files));
+
+        output.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<files>\n");
 
         for (path, content) in files {
-            let escaped_path = Self::escape_xml(path);
-            let escaped_content = Self::escape_xml(content);
-
-            writeln!(output, "  <file>")
-                .map_err(|e| SwarmError::Other(format!("Failed to write: {}", e)))?;
-            writeln!(output, "    <path>{}</path>", escaped_path)
-                .map_err(|e| SwarmError::Other(format!("Failed to write: {}", e)))?;
-            writeln!(output, "    <content><![CDATA[{}]]></content>", escaped_content)
-                .map_err(|e| SwarmError::Other(format!("Failed to write: {}", e)))?;
-            writeln!(output, "  </file>")
-                .map_err(|e| SwarmError::Other(format!("Failed to write: {}", e)))?;
+            output.push_str("  <file>\n    <path>");
+            append_xml_escaped(&mut output, path);
+            output.push_str("</path>\n    <content><![CDATA[");
+            append_cdata_escaped(&mut output, content);
+            output.push_str("]]></content>\n  </file>\n");
         }
 
-        writeln!(output, "</files>")
-            .map_err(|e| SwarmError::Other(format!("Failed to write: {}", e)))?;
+        output.push_str("</files>\n");
 
-        Ok(output)
+        output
+    }
+}
+
+fn append_xml_escaped(out: &mut String, s: &str) {
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(c),
+        }
+    }
+}
+
+fn append_cdata_escaped(out: &mut String, s: &str) {
+    let pat = "]]>";
+    let mut start = 0;
+
+    while let Some(pos) = s[start..].find(pat) {
+        out.push_str(&s[start..start + pos]);
+        out.push_str("]]]]><![CDATA[>");
+        start += pos + pat.len();
     }
 
-    fn escape_xml(s: &str) -> String {
-        s.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-            .replace('\'', "&apos;")
-    }
+    out.push_str(&s[start..]);
 }

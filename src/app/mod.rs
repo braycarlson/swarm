@@ -93,13 +93,15 @@ impl SwarmApp {
 }
 
 impl eframe::App for SwarmApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        crate::ui::widget::titlebar::titlebar::TitleBar::render(ctx);
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
 
-        self.ui.theme.apply(ctx);
+        crate::ui::widget::titlebar::titlebar::TitleBar::render(ui);
+
+        self.ui.theme.apply(&ctx);
 
         let scale = if self.model.options.ui_scale.is_none() {
-            ctx.input(|i| {
+            ui.input(|i| {
                 i.viewport().outer_rect.map(|rect| {
                     let center = rect.center();
                     self.model.options.effective_ui_scale_at_position(center.x, center.y)
@@ -144,11 +146,11 @@ impl eframe::App for SwarmApp {
             }
         }
 
-        self.ui.toast.show(ctx);
+        self.ui.toast.show(&ctx);
 
         self.process_messages();
 
-        View::render(ctx, &self.model, &self.ui, &self.msg_sender);
+        View::render(ui, &self.model, &self.ui, &self.msg_sender);
 
         if matches!(
             self.model.tree.load_status,
@@ -164,7 +166,17 @@ impl eframe::App for SwarmApp {
         }
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
+        if !self.model.tree.nodes.is_empty() {
+            self.model.sessions.sync_from_tree_and_search(&self.model.tree, &self.model.search);
+        }
+
+        if let Some(session) = self.model.sessions.active_session() {
+            if !session.tree_state.nodes.is_empty() {
+                self.runtime.save_last_session(session);
+            }
+        }
+
         if self.model.options.delete_sessions_on_exit {
             if let Some(dir) = dirs::data_local_dir() {
                 let sessions_dir = dir

@@ -4,17 +4,75 @@ use eframe::egui;
 
 use crate::app::message::{App, Msg};
 use crate::constants::{APP_NAME, APP_VERSION};
+use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rect};
 
 pub fn render(ctx: &egui::Context, sender: &Sender<Msg>) {
     let center = ctx.content_rect().center();
+    let title_bar_height = 32.0;
+    let button_width = 46.0;
 
-    egui::Window::new(egui::RichText::new("About").size(14.0))
+    egui::Window::new("about")
+        .title_bar(false)
         .resizable(false)
-        .fixed_size([420.0, 280.0])
+        .fixed_size([420.0, 320.0])
         .collapsible(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .current_pos(center)
         .show(ctx, |ui| {
+            let content_rect = ui.max_rect();
+
+            let title_rect = egui::Rect::from_min_size(
+                content_rect.min,
+                egui::vec2(content_rect.width(), title_bar_height),
+            );
+
+            ui.allocate_ui_with_layout(
+                egui::vec2(ui.available_width(), title_bar_height),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_height(title_bar_height);
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new("About").size(14.0));
+                }
+            );
+
+            let close_rect = egui::Rect::from_min_size(
+                title_rect.right_top() - egui::vec2(button_width, 0.0),
+                egui::vec2(button_width, title_bar_height),
+            );
+
+            let close_response = ui.interact(
+                close_rect,
+                ui.id().with("about_close"),
+                egui::Sense::click(),
+            );
+
+            if close_response.hovered() {
+                let p = ui.painter().with_clip_rect(title_rect);
+                p.rect_filled(
+                    hover_rect(close_rect, title_rect),
+                    0.0,
+                    egui::Color32::from_rgb(232, 17, 35),
+                );
+            }
+
+            {
+                let fg = if close_response.hovered() {
+                    egui::Color32::WHITE
+                } else {
+                    ui.visuals().text_color()
+                };
+
+                let p = ui.painter().with_clip_rect(title_rect);
+                draw_title_icon(&p, close_rect, TitleIcon::Close, fg);
+            }
+
+            if close_response.clicked() {
+                sender.send(Msg::App(App::AboutClosed)).ok();
+            }
+
+            ui.separator();
+
             egui::Frame::dark_canvas(ui.style())
                 .fill(ui.visuals().extreme_bg_color)
                 .inner_margin(8.0)
@@ -38,14 +96,6 @@ pub fn render(ctx: &egui::Context, sender: &Sender<Msg>) {
                         ui.hyperlink_to("Homepage", "https://github.com/braycarlson/swarm");
                         ui.hyperlink_to("Editor Extension", "https://github.com/braycarlson/swarm_extension/");
                         ui.label("License: MIT");
-
-                        ui.add_space(ui.available_height() - 35.0);
-
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("Close").clicked() {
-                                sender.send(Msg::App(App::AboutClosed)).ok();
-                            }
-                        });
 
                         ui.add_space(3.0);
                     });

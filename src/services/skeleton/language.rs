@@ -2,7 +2,7 @@ use std::path::Path;
 
 use tree_sitter::Language as TsLanguage;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Language {
     Css,
     JavaScript,
@@ -33,10 +33,6 @@ impl Language {
             Self::Rust => tree_sitter_rust::LANGUAGE.into(),
             Self::Zig => tree_sitter_zig::LANGUAGE.into(),
         }
-    }
-
-    pub fn has_skeleton_support(&self) -> bool {
-        true
     }
 
     pub fn name(&self) -> &'static str {

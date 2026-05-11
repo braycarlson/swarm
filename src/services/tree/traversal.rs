@@ -1,4 +1,4 @@
-use crate::app::state::search::{FileMetadata, ParsedQuery, SearchModel, TypeFilter};
+use crate::app::state::search::{ParsedQuery, SearchModel};
 use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::model::error::SwarmResult;
@@ -40,7 +40,7 @@ impl Traversable for FileNode {
     }
 
     fn matches_parsed_query_with_git(&self, query: &ParsedQuery, git: Option<&GitService>) -> bool {
-        matches_node_recursive(self, query, git, 0)
+        self.matches_query_recursive(query, git, 0)
     }
 
     fn propagate_checked(&mut self, checked: bool) {
@@ -93,128 +93,6 @@ impl Traversable for FileNode {
     }
 }
 
-fn matches_node_recursive(
-    node: &FileNode,
-    query: &ParsedQuery,
-    git: Option<&GitService>,
-    depth: usize,
-) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-
-    let name = node.file_name().unwrap_or_default();
-    let path = node.path.to_string_lossy();
-
-    if node.is_directory() {
-        if query.has_depth_filter() && !query.matches_depth(depth) {
-            return false;
-        }
-
-        if matches!(query.type_filter, Some(TypeFilter::Directory)) {
-            let self_matches = query.matches_full(&name, &path, None, true, None);
-
-            let has_matching_children = node.children.iter().any(|child| {
-                matches_node_recursive(child, query, git, depth + 1)
-            });
-
-            return self_matches || has_matching_children;
-        }
-
-        if query.requires_file_match() {
-            let has_matching_children = node.children.iter().any(|child| {
-                matches_node_recursive(child, query, git, depth + 1)
-            });
-
-            return has_matching_children;
-        }
-
-        let has_matching_children = node.children.iter().any(|child| {
-            matches_node_recursive(child, query, git, depth + 1)
-        });
-
-        if has_matching_children {
-            return true;
-        }
-
-        return query.matches_full(&name, &path, None, true, None);
-    }
-
-    let git_status = git.map(|g| g.get_status(&node.path));
-    let metadata = get_file_metadata(node, query);
-
-    query.matches_full(&name, &path, git_status, false, metadata.as_ref())
-}
-
-fn matches_node_at_depth(
-    node: &FileNode,
-    query: &ParsedQuery,
-    git: Option<&GitService>,
-    depth: usize,
-) -> bool {
-    if query.is_empty() {
-        return true;
-    }
-
-    let name = node.file_name().unwrap_or_default();
-    let path = node.path.to_string_lossy();
-
-    if node.is_directory() {
-        if query.has_depth_filter() && !query.matches_depth(depth) {
-            return false;
-        }
-
-        if matches!(query.type_filter, Some(TypeFilter::Directory)) {
-            let self_matches = query.matches_full(&name, &path, None, true, None);
-
-            let has_matching_children = node.children.iter().any(|child| {
-                matches_node_at_depth(child, query, git, depth + 1)
-            });
-
-            return self_matches || has_matching_children;
-        }
-
-        if query.requires_file_match() {
-            let has_matching_children = node.children.iter().any(|child| {
-                matches_node_at_depth(child, query, git, depth + 1)
-            });
-
-            return has_matching_children;
-        }
-
-        let has_matching_children = node.children.iter().any(|child| {
-            matches_node_at_depth(child, query, git, depth + 1)
-        });
-
-        if has_matching_children {
-            return true;
-        }
-
-        return query.matches_full(&name, &path, None, true, None);
-    }
-
-    let git_status = git.map(|g| g.get_status(&node.path));
-    let metadata = get_file_metadata(node, query);
-
-    query.matches_full(&name, &path, git_status, false, metadata.as_ref())
-}
-
-fn get_file_metadata(node: &FileNode, query: &ParsedQuery) -> Option<FileMetadata> {
-    if query.is_expensive() {
-        return node.metadata.clone();
-    }
-
-    if !query.needs_metadata() {
-        return None;
-    }
-
-    if let Some(ref cached) = node.metadata {
-        return Some(cached.clone());
-    }
-
-    FileMetadata::from_path_basic(&node.path)
-}
-
 pub fn should_show_node(node: &FileNode, search_query: &str) -> bool {
     should_show_node_with_git(node, search_query, None)
 }
@@ -242,7 +120,7 @@ pub fn should_show_node_with_search(node: &FileNode, search: &SearchModel, git: 
     }
 
     let parsed = search.parsed();
-    node.matches_parsed_query_with_git(&parsed, git)
+    node.matches_parsed_query_with_git(parsed.as_ref(), git)
 }
 
 pub fn should_show_node_at_depth(
@@ -269,5 +147,5 @@ pub fn should_show_node_at_depth(
         return is_match;
     }
 
-    matches_node_at_depth(node, query, git, depth)
+    node.matches_query_recursive(query, git, depth)
 }

@@ -16,28 +16,30 @@ pub struct View;
 
 impl View {
     pub fn render(
-        ctx: &egui::Context,
+        ui: &mut egui::Ui,
         model: &Model,
-        ui: &UiState,
+        ui_state: &UiState,
         sender: &Sender<Msg>,
     ) {
-        menu::render(ctx, model, ui, sender);
-        bottom::render(ctx, model, ui, sender);
-        central::render(ctx, model, ui, sender);
+        menu::render(ui, model, ui_state, sender);
+        bottom::render(ui, model, ui_state, sender);
+        central::render(ui, model, ui_state, sender);
 
-        if ui.show_options {
-            options::render(ctx, model, ui, sender);
+        let ctx = ui.ctx();
+
+        if ui_state.show_options {
+            options::render(ctx, model, ui_state, sender);
         }
 
-        if ui.show_about {
+        if ui_state.show_about {
             about::render(ctx, sender);
         }
 
-        if ui.show_save_preset {
-            preset::render_save(ctx, ui, sender);
+        if ui_state.show_save_preset {
+            preset::render_save(ctx, ui_state, sender);
         }
 
-        if ui.show_load_preset {
+        if ui_state.show_load_preset {
             preset::render_load(ctx, model, sender);
         }
     }

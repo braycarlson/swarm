@@ -1,4 +1,3 @@
-pub mod filter;
 pub mod format;
 pub mod generator;
 pub mod loader;

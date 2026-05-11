@@ -1,5 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
+use rayon::prelude::*;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::app::state::search::{FileMetadata, ParsedQuery, TypeFilter};
@@ -22,7 +25,25 @@ pub struct FileNode {
     pub loaded: bool,
     #[serde(skip)]
     pub metadata: Option<FileMetadata>,
+    #[serde(skip)]
+    pub name_offset: u32,
     pub path: PathBuf,
+    #[serde(skip, default = "empty_path_lower")]
+    pub path_lower: Arc<str>,
+}
+
+fn empty_path_lower() -> Arc<str> {
+    static EMPTY: OnceLock<Arc<str>> = OnceLock::new();
+    EMPTY.get_or_init(|| Arc::from("")).clone()
+}
+
+fn compute_path_cache(path: &Path) -> (Arc<str>, u32) {
+    let path_lower = path.to_string_lossy().to_ascii_lowercase();
+    let name_byte_len = path.file_name()
+        .map(|n| n.to_string_lossy().len())
+        .unwrap_or(0);
+    let name_offset = (path_lower.len() - name_byte_len) as u32;
+    (Arc::from(path_lower), name_offset)
 }
 
 impl FileNode {
@@ -33,13 +54,32 @@ impl FileNode {
             NodeKind::File
         };
 
+        let (path_lower, name_offset) = compute_path_cache(&path);
+
         Self {
             checked: false,
             children: Vec::new(),
             kind,
             loaded: false,
             metadata: None,
+            name_offset,
             path,
+            path_lower,
+        }
+    }
+
+    pub fn with_kind(path: PathBuf, kind: NodeKind) -> Self {
+        let (path_lower, name_offset) = compute_path_cache(&path);
+
+        Self {
+            checked: false,
+            children: Vec::new(),
+            kind,
+            loaded: false,
+            metadata: None,
+            name_offset,
+            path,
+            path_lower,
         }
     }
 
@@ -49,6 +89,10 @@ impl FileNode {
 
     pub fn file_name(&self) -> Option<String> {
         self.path.file_name_string()
+    }
+
+    pub fn name_lower(&self) -> &str {
+        &self.path_lower[self.name_offset as usize..]
     }
 
     pub fn has_children(&self) -> bool {
@@ -83,17 +127,17 @@ impl FileNode {
     }
 
     pub fn lowercase_name(&self) -> String {
-        self.path.lowercase_name()
+        self.name_lower().to_owned()
     }
 
-    pub fn collect_checkbox_states_recursive(&self, states: &mut std::collections::HashMap<PathBuf, bool>) {
+    pub fn collect_checkbox_states_recursive(&self, states: &mut FxHashMap<PathBuf, bool>) {
         states.insert(self.path.clone(), self.checked);
         for child in &self.children {
             child.collect_checkbox_states_recursive(states);
         }
     }
 
-    pub fn restore_checkbox_states_recursive(&mut self, states: &std::collections::HashMap<PathBuf, bool>) {
+    pub fn restore_checkbox_states_recursive(&mut self, states: &FxHashMap<PathBuf, bool>) {
         if let Some(&checked) = states.get(&self.path) {
             self.checked = checked;
         }
@@ -115,7 +159,7 @@ impl FileNode {
         if self.checked {
             match self.kind {
                 NodeKind::File => {
-                    out.push(self.path.display().to_string());
+                    out.push(self.path.to_string_lossy().into_owned());
                 }
                 NodeKind::Directory => {
                     for child in &self.children {
@@ -134,13 +178,10 @@ impl FileNode {
         self.matches_query_recursive(query, git, 0)
     }
 
-    fn matches_query_recursive(&self, query: &ParsedQuery, git: Option<&GitService>, depth: usize) -> bool {
+    pub(crate) fn matches_query_recursive(&self, query: &ParsedQuery, git: Option<&GitService>, depth: usize) -> bool {
         if query.is_empty() {
             return true;
         }
-
-        let name = self.file_name().unwrap_or_default();
-        let path = self.path.to_string_lossy();
 
         if self.is_directory() {
             if query.has_depth_filter() && !query.matches_depth(depth) {
@@ -148,7 +189,7 @@ impl FileNode {
             }
 
             if matches!(query.type_filter, Some(TypeFilter::Directory)) {
-                let self_matches = query.matches_full(&name, &path, None, true, None);
+                let self_matches = query.matches_full(self.name_lower(), &self.path_lower, None, true, None);
 
                 let has_matching_children = self.children.iter().any(|child| {
                     child.matches_query_recursive(query, git, depth + 1)
@@ -172,13 +213,31 @@ impl FileNode {
                 return true;
             }
 
-            return query.matches_full(&name, &path, None, true, None);
+            return query.matches_full(self.name_lower(), &self.path_lower, None, true, None);
         }
 
         let git_status = git.map(|g| g.get_status(&self.path));
         let metadata = self.get_metadata_for_query(query);
 
-        query.matches_full(&name, &path, git_status, false, metadata.as_ref())
+        if !query.matches_full(self.name_lower(), &self.path_lower, git_status, false, metadata.as_ref()) {
+            return false;
+        }
+
+        if !query.content_patterns.is_empty() {
+            let matchers = crate::services::search::build_content_matchers(&query.content_patterns);
+
+            if !crate::services::search::content_matches(&self.path, &matchers) {
+                return false;
+            }
+        }
+
+        if !query.symbol_patterns.is_empty()
+            && !crate::services::search::symbol_matches(&self.path, &query.symbol_patterns)
+        {
+            return false;
+        }
+
+        true
     }
 
     fn get_metadata_for_query(&self, query: &ParsedQuery) -> Option<FileMetadata> {
@@ -275,6 +334,16 @@ impl FileNode {
             child.load_metadata_recursive(include_lines, include_content);
         }
     }
+
+    pub fn recompute_cache(&mut self) {
+        let (path_lower, name_offset) = compute_path_cache(&self.path);
+        self.path_lower = path_lower;
+        self.name_offset = name_offset;
+
+        self.children.par_iter_mut().for_each(|child| {
+            child.recompute_cache();
+        });
+    }
 }
 
 #[derive(Default)]
@@ -325,13 +394,17 @@ impl FileNodeBuilder {
             }
         });
 
+        let (path_lower, name_offset) = compute_path_cache(&path);
+
         FileNode {
             checked: self.checked,
             children: self.children,
             kind,
             loaded: self.loaded,
             metadata: self.metadata,
+            name_offset,
             path,
+            path_lower,
         }
     }
 }

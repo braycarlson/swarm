@@ -17,7 +17,7 @@ use crate::services::tree::traversal::Traversable;
 const MAX_PATH_DEPTH: u32 = 100;
 
 pub fn sync_to_active_session(model: &mut Model) {
-    model.sessions.sync_from_tree_and_search(model.tree.clone(), model.search.clone());
+    model.sessions.sync_from_tree_and_search(&model.tree, &model.search);
 }
 
 pub fn load_node_children(nodes: &mut [FileNode], path: &[u32], options: &Options) {
@@ -169,9 +169,8 @@ fn has_selected_child(nodes: &[FileNode], path: &[u32]) -> bool {
     for (i, &index) in path.iter().enumerate() {
         if let Some(node) = current.get(index as usize) {
             if i == last {
-                return node.children.iter().any(FileNode::is_selected);
+                return node.children.iter().any(|c| c.checked || has_any_selected(&c.children));
             }
-
             current = &node.children;
         } else {
             return false;
@@ -179,4 +178,8 @@ fn has_selected_child(nodes: &[FileNode], path: &[u32]) -> bool {
     }
 
     false
+}
+
+fn has_any_selected(nodes: &[FileNode]) -> bool {
+    nodes.iter().any(|n| n.checked || has_any_selected(&n.children))
 }
