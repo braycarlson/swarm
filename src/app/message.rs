@@ -14,7 +14,7 @@ use crate::services::worker::filter::FilterEntry;
 use crate::ui::themes::Theme;
 
 #[derive(Debug)]
-pub enum Msg {
+pub enum Message {
     Session(Session),
     Tree(Tree),
     Search(Search),
@@ -150,7 +150,7 @@ pub enum App {
     OpenInExplorer,
 }
 
-pub enum Cmd {
+pub enum Command {
     LoadSession { path: PathBuf, options: Arc<Options> },
     RefreshTree { nodes: Vec<FileNode>, options: Arc<Options> },
     GatherFiles { paths: Vec<String>, options: Arc<Options>, git: GitService, query: ParsedQuery },
@@ -172,31 +172,31 @@ pub enum Cmd {
         git: GitService,
     },
     CancelFilter,
-    Batch(Vec<Cmd>),
+    Batch(Vec<Command>),
     None,
 }
 
-pub struct CmdBuilder {
-    commands: Vec<Cmd>,
+pub struct CommandBuilder {
+    commands: Vec<Command>,
 }
 
-impl CmdBuilder {
+impl CommandBuilder {
     pub fn new() -> Self {
         Self { commands: Vec::new() }
     }
 
-    pub fn add(mut self, cmd: Cmd) -> Self {
-        if !matches!(cmd, Cmd::None) {
-            self.commands.push(cmd);
+    pub fn add(mut self, command: Command) -> Self {
+        if !matches!(command, Command::None) {
+            self.commands.push(command);
         }
         self
     }
 
-    pub fn build(self) -> Cmd {
+    pub fn build(self) -> Command {
         match self.commands.len() {
-            0 => Cmd::None,
+            0 => Command::None,
             1 => self.commands.into_iter().next().unwrap(),
-            _ => Cmd::Batch(self.commands),
+            _ => Command::Batch(self.commands),
         }
     }
 }

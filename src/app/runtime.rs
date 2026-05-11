@@ -5,7 +5,7 @@ use std::thread;
 
 use copypasta::{ClipboardContext, ClipboardProvider};
 
-use crate::app::message::{Cmd, Copy, Msg, Render, Search, Skeleton};
+use crate::app::message::{Command, Copy, Message, Render, Search, Skeleton};
 use crate::app::state::{SessionData, SessionsModel, SearchModel};
 use crate::constants::APP_NAME;
 use crate::model::node::FileNode;
@@ -20,31 +20,31 @@ use crate::services::worker::filter::{FilterResult, FilterWorker};
 use crate::services::worker::session::{SessionLoadResult, SessionLoader};
 use crate::services::worker::tree::{TreeLoadResult, TreeLoader};
 
-const MAX_MESSAGES_PER_POLL: u32 = 20;
+const MESSAGES_PER_POLL_MAX: u32 = 20;
 
 pub struct Runtime {
     filter_worker: FilterWorker,
+    gather_sender: Option<Sender<()>>,
     gather_service: GatherService,
-    gather_tx: Option<Sender<()>>,
-    msg_sender: Sender<Msg>,
+    message_sender: Sender<Message>,
     session_loader: SessionLoader,
-    skeleton_gen_tx: Option<Sender<()>>,
+    skeleton_generate_sender: Option<Sender<()>>,
     skeleton_generator: SkeletonGenerator,
-    tree_gen_tx: Option<Sender<()>>,
+    tree_generate_sender: Option<Sender<()>>,
     tree_loader: TreeLoader,
 }
 
 impl Runtime {
-    pub fn new(msg_sender: Sender<Msg>) -> Self {
+    pub fn new(message_sender: Sender<Message>) -> Self {
         Self {
             filter_worker: FilterWorker::new(),
+            gather_sender: None,
             gather_service: GatherService::new(),
-            gather_tx: None,
-            msg_sender: msg_sender.clone(),
+            message_sender: message_sender.clone(),
             session_loader: SessionLoader::new(),
-            skeleton_gen_tx: None,
+            skeleton_generate_sender: None,
             skeleton_generator: SkeletonGenerator::new(),
-            tree_gen_tx: None,
+            tree_generate_sender: None,
             tree_loader: TreeLoader::new(),
         }
     }
@@ -89,13 +89,13 @@ impl Runtime {
         sessions
     }
 
-    pub fn execute(&mut self, cmd: Cmd) {
-        match cmd {
-            Cmd::LoadSession { path, options } => {
+    pub fn execute(&mut self, command: Command) {
+        match command {
+            Command::LoadSession { path, options } => {
                 self.session_loader.start_loading(path, (*options).clone());
             }
 
-            Cmd::RefreshTree { mut nodes, options } => {
+            Command::RefreshTree { mut nodes, options } => {
                 for node in &mut nodes {
                     let _ = node.refresh(&options);
                 }
@@ -103,48 +103,48 @@ impl Runtime {
                 self.tree_loader.start_load(nodes, (*options).clone());
             }
 
-            Cmd::GatherFiles { paths, options, git, query } => {
+            Command::GatherFiles { paths, options, git, query } => {
                 self.execute_gather(paths, options, git, query);
             }
 
-            Cmd::RenderTree { nodes, options } => {
+            Command::RenderTree { nodes, options } => {
                 self.execute_tree_render(nodes, options);
             }
 
-            Cmd::GenerateSkeleton { paths, options } => {
+            Command::GenerateSkeleton { paths, options } => {
                 self.execute_skeleton_generate(paths, options);
             }
 
-            Cmd::SaveSessions => {
+            Command::SaveSessions => {
             }
 
-            Cmd::DeleteSessionData(id) => {
+            Command::DeleteSessionData(id) => {
                 self.delete_session_file(&id);
             }
 
-            Cmd::PropagateCheckedWithLoad { nodes, path, checked, options, search, git } => {
+            Command::PropagateCheckedWithLoad { nodes, path, checked, options, search, git } => {
                 self.execute_propagate_with_load(nodes, path, checked, options, search, git);
             }
 
-            Cmd::StartExpensiveFilter { entries, query, git } => {
+            Command::StartExpensiveFilter { entries, query, git } => {
                 self.filter_worker.start_filter(entries, query, git);
             }
 
-            Cmd::CancelFilter => {
+            Command::CancelFilter => {
                 self.filter_worker.cancel();
             }
 
-            Cmd::Batch(cmds) => {
-                for cmd in cmds {
-                    self.execute(cmd);
+            Command::Batch(commands) => {
+                for command in commands {
+                    self.execute(command);
                 }
             }
 
-            Cmd::None => {}
+            Command::None => {}
         }
     }
 
-    pub fn poll(&mut self) -> Vec<Msg> {
+    pub fn poll(&mut self) -> Vec<Message> {
         let mut all_messages = Vec::new();
 
         let session_messages = self.poll_session_loader();
@@ -211,70 +211,70 @@ impl Runtime {
         std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
     }
 
-    fn poll_session_loader(&self) -> Vec<Msg> {
+    fn poll_session_loader(&self) -> Vec<Message> {
         let mut messages = Vec::new();
         let mut count: u32 = 0;
 
         while let Some(result) = self.session_loader.check_results() {
             count += 1;
 
-            if count > MAX_MESSAGES_PER_POLL {
+            if count > MESSAGES_PER_POLL_MAX {
                 break;
             }
 
-            let msg = match result {
-                SessionLoadResult::Loaded(nodes) => Msg::Tree(crate::app::message::Tree::Loaded(nodes)),
-                SessionLoadResult::Loading(message) => Msg::Tree(crate::app::message::Tree::LoadProgress {
-                    current: message,
+            let message = match result {
+                SessionLoadResult::Loaded(nodes) => Message::Tree(crate::app::message::Tree::Loaded(nodes)),
+                SessionLoadResult::Loading(text) => Message::Tree(crate::app::message::Tree::LoadProgress {
+                    current: text,
                     processed: 0,
                     total: 0,
                 }),
-                SessionLoadResult::Error(error) => Msg::Tree(crate::app::message::Tree::LoadFailed(error)),
+                SessionLoadResult::Error(error) => Message::Tree(crate::app::message::Tree::LoadFailed(error)),
             };
 
-            messages.push(msg);
+            messages.push(message);
         }
 
         messages
     }
 
-    fn poll_tree_loader(&mut self) -> Vec<Msg> {
+    fn poll_tree_loader(&mut self) -> Vec<Message> {
         let mut messages = Vec::new();
 
         while let Some(result) = self.tree_loader.check_results() {
-            let msg = match result {
-                TreeLoadResult::LoadedTree(nodes) => Msg::Tree(crate::app::message::Tree::Loaded(nodes)),
-                TreeLoadResult::ProcessingPath(path) => Msg::Tree(crate::app::message::Tree::LoadProgress {
+            let message = match result {
+                TreeLoadResult::LoadedTree(nodes) => Message::Tree(crate::app::message::Tree::Loaded(nodes)),
+                TreeLoadResult::ProcessingPath(path) => Message::Tree(crate::app::message::Tree::LoadProgress {
                     current: path,
                     processed: 0,
                     total: 0,
                 }),
-                TreeLoadResult::CountUpdate(processed, total) => Msg::Tree(crate::app::message::Tree::LoadProgress {
+                TreeLoadResult::CountUpdate(processed, total) => Message::Tree(crate::app::message::Tree::LoadProgress {
                     current: String::new(),
                     processed,
                     total,
                 }),
-                TreeLoadResult::Error(error) => Msg::Tree(crate::app::message::Tree::LoadFailed(error)),
+                TreeLoadResult::Error(error) => Message::Tree(crate::app::message::Tree::LoadFailed(error)),
             };
 
-            messages.push(msg);
+            messages.push(message);
         }
 
         messages
     }
 
-    fn poll_filter_worker(&mut self) -> Vec<Msg> {
+    fn poll_filter_worker(&mut self) -> Vec<Message> {
         let mut messages = Vec::new();
 
         while let Some(result) = self.filter_worker.check_results() {
-            let msg = match result {
-                FilterResult::Started => Msg::Search(Search::FilterStarted),
-                FilterResult::Progress(current, total) => Msg::Search(Search::FilterProgress(current, total)),
-                FilterResult::Complete(matching) => Msg::Search(Search::FilterComplete(matching)),
-                FilterResult::Cancelled => Msg::Search(Search::FilterCancelled),
+            let message = match result {
+                FilterResult::Started => Message::Search(Search::FilterStarted),
+                FilterResult::Progress(current, total) => Message::Search(Search::FilterProgress(current, total)),
+                FilterResult::Complete(matching) => Message::Search(Search::FilterComplete(matching)),
+                FilterResult::Cancelled => Message::Search(Search::FilterCancelled),
             };
 
-            messages.push(msg);
+            messages.push(message);
         }
 
         messages
@@ -282,17 +282,17 @@ impl Runtime {
 
     fn execute_gather(&mut self, paths: Vec<String>, options: Arc<Options>, git: GitService, query: ParsedQuery) {
         let gather = self.gather_service.clone();
-        let sender = self.msg_sender.clone();
+        let sender = self.message_sender.clone();
 
-        sender.send(Msg::Copy(Copy::Started)).ok();
+        sender.send(Message::Copy(Copy::Started)).ok();
 
-        let (tx, rx) = mpsc::channel();
-        self.gather_tx = Some(tx);
+        let (transmitter, receiver) = mpsc::channel();
+        self.gather_sender = Some(transmitter);
 
         thread::spawn(move || {
             thread::sleep(std::time::Duration::from_millis(500));
 
-            if rx.try_recv().is_ok() {
+            if receiver.try_recv().is_ok() {
                 return;
             }
 
@@ -302,28 +302,28 @@ impl Runtime {
                         let _ = clipboard.set_contents(output.clone());
                     }
 
-                    let message = format!("{} lines / {} tokens copied", stats.line_count, stats.token_count);
-                    let _ = sender.send(Msg::Copy(Copy::Completed(message)));
+                    let text = format!("{} lines / {} tokens copied", stats.count_line, stats.count_token);
+                    let _ = sender.send(Message::Copy(Copy::Completed(text)));
                 }
                 Err(e) => {
-                    let _ = sender.send(Msg::Copy(Copy::Failed(e.to_string())));
+                    let _ = sender.send(Message::Copy(Copy::Failed(e.to_string())));
                 }
             }
         });
     }
 
     fn execute_tree_render(&mut self, nodes: Vec<FileNode>, options: Arc<Options>) {
-        let sender = self.msg_sender.clone();
+        let sender = self.message_sender.clone();
 
-        sender.send(Msg::Render(Render::Started)).ok();
+        sender.send(Message::Render(Render::Started)).ok();
 
-        let (tx, rx) = mpsc::channel();
-        self.tree_gen_tx = Some(tx);
+        let (transmitter, receiver) = mpsc::channel();
+        self.tree_generate_sender = Some(transmitter);
 
         thread::spawn(move || {
             thread::sleep(std::time::Duration::from_millis(500));
 
-            if rx.try_recv().is_ok() {
+            if receiver.try_recv().is_ok() {
                 return;
             }
 
@@ -334,23 +334,23 @@ impl Runtime {
                 let _ = clipboard.set_contents(output.clone());
             }
 
-            let _ = sender.send(Msg::Render(Render::Generated(output)));
+            let _ = sender.send(Message::Render(Render::Generated(output)));
         });
     }
 
     fn execute_skeleton_generate(&mut self, paths: Vec<String>, options: Arc<Options>) {
         let generator = self.skeleton_generator.clone();
-        let sender = self.msg_sender.clone();
+        let sender = self.message_sender.clone();
 
-        sender.send(Msg::Skeleton(Skeleton::Started)).ok();
+        sender.send(Message::Skeleton(Skeleton::Started)).ok();
 
-        let (tx, rx) = mpsc::channel();
-        self.skeleton_gen_tx = Some(tx);
+        let (transmitter, receiver) = mpsc::channel();
+        self.skeleton_generate_sender = Some(transmitter);
 
         thread::spawn(move || {
             thread::sleep(std::time::Duration::from_millis(500));
 
-            if rx.try_recv().is_ok() {
+            if receiver.try_recv().is_ok() {
                 return;
             }
 
@@ -360,15 +360,15 @@ impl Runtime {
                         let _ = clipboard.set_contents(output.clone());
                     }
 
-                    let message = format!(
+                    let text = format!(
                         "{} files / {} lines / {} tokens skeleton copied",
-                        stats.file_count, stats.line_count, stats.token_count,
+                        stats.count_file, stats.count_line, stats.count_token,
                     );
 
-                    let _ = sender.send(Msg::Skeleton(Skeleton::Generated(message)));
+                    let _ = sender.send(Message::Skeleton(Skeleton::Generated(text)));
                 }
                 Err(e) => {
-                    let _ = sender.send(Msg::Skeleton(Skeleton::Failed(e.to_string())));
+                    let _ = sender.send(Message::Skeleton(Skeleton::Failed(e.to_string())));
                 }
             }
         });
@@ -383,9 +383,9 @@ impl Runtime {
         search: SearchModel,
         git: GitService,
     ) {
-        let sender = self.msg_sender.clone();
+        let sender = self.message_sender.clone();
 
-        sender.send(Msg::Tree(crate::app::message::Tree::PropagateStarted)).ok();
+        sender.send(Message::Tree(crate::app::message::Tree::PropagateStarted)).ok();
 
         thread::spawn(move || {
             thread::sleep(std::time::Duration::from_millis(100));
@@ -415,7 +415,7 @@ impl Runtime {
                 }
             }
 
-            let _ = sender.send(Msg::Tree(crate::app::message::Tree::PropagateCompleted(nodes)));
+            let _ = sender.send(Message::Tree(crate::app::message::Tree::PropagateCompleted(nodes)));
         });
     }
 

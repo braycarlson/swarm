@@ -5,7 +5,7 @@ use std::sync::Arc;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 
-use crate::app::state::search::{Command, ParsedQuery};
+use crate::app::state::search::{SearchCommand, ParsedQuery};
 use crate::model::error::SwarmResult;
 use crate::model::options::Options;
 use crate::model::path::PathExtensions;
@@ -15,8 +15,8 @@ use super::git::GitService;
 
 #[derive(Clone, Debug)]
 pub struct GatherStats {
-    pub line_count: usize,
-    pub token_count: usize,
+    pub count_line: usize,
+    pub count_token: usize,
 }
 
 #[derive(Clone)]
@@ -41,7 +41,7 @@ impl GatherService {
         let filter: Arc<dyn PathFilter> = Arc::new(GlobPathFilter::from_options(options)?);
         let mut files = Vec::new();
 
-        let include_diff = query.is_some_and(|q| q.has_command(Command::Diff));
+        let include_diff = query.is_some_and(|q| q.has_command(SearchCommand::Diff));
 
         for path_str in paths {
             let path = Path::new(path_str.trim());
@@ -66,12 +66,12 @@ impl GatherService {
 
         let output = output_format.format(&files)?;
 
-        let line_count = memchr::memchr_iter(b'\n', output.as_bytes()).count();
-        let token_count = estimate_tokens(&output);
+        let count_line = memchr::memchr_iter(b'\n', output.as_bytes()).count();
+        let count_token = estimate_tokens(&output);
 
         let stats = GatherStats {
-            line_count,
-            token_count,
+            count_line,
+            count_token,
         };
 
         Ok((output, stats))

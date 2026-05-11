@@ -15,14 +15,14 @@ use super::core::{Worker, WorkerTask};
 
 pub struct FilterEntry {
     pub path: PathBuf,
-    pub path_lower: Arc<str>,
-    pub name_offset: u32,
+    pub path_lowercase: Arc<str>,
+    pub offset_name: u32,
     pub metadata: Option<FileMetadata>,
 }
 
 impl FilterEntry {
     pub fn name_lower(&self) -> &str {
-        &self.path_lower[self.name_offset as usize..]
+        &self.path_lowercase[self.offset_name as usize..]
     }
 }
 
@@ -63,7 +63,7 @@ impl FilterTask {
         let total = entries.len();
         let _ = result_sender.send(FilterResult::Progress(0, total));
 
-        let content_matchers = build_content_matchers(&query.content_patterns);
+        let content_matchers = build_content_matchers(&query.patterns_content);
 
         let matching_files: FxHashSet<PathBuf> = entries
             .par_iter()
@@ -95,7 +95,7 @@ impl FilterTask {
         let git_status = Some(git.get_status(&entry.path));
         let metadata = Self::resolve_metadata(entry, query);
 
-        if !query.matches_full(entry.name_lower(), &entry.path_lower, git_status, false, metadata.as_ref()) {
+        if !query.matches_full(entry.name_lower(), &entry.path_lowercase, git_status, false, metadata.as_ref()) {
             return false;
         }
 
@@ -103,8 +103,8 @@ impl FilterTask {
             return false;
         }
 
-        if !query.symbol_patterns.is_empty()
-            && !symbol_matches(&entry.path, &query.symbol_patterns)
+        if !query.patterns_symbol.is_empty()
+            && !symbol_matches(&entry.path, &query.patterns_symbol)
         {
             return false;
         }
@@ -245,8 +245,8 @@ fn collect_entries(
         } else {
             out.push(FilterEntry {
                 path: node.path.clone(),
-                path_lower: Arc::clone(&node.path_lower),
-                name_offset: node.name_offset,
+                path_lowercase: Arc::clone(&node.path_lowercase),
+                offset_name: node.offset_name,
                 metadata: node.metadata.clone(),
             });
         }

@@ -2,7 +2,7 @@ use std::sync::mpsc::Sender;
 
 use eframe::egui;
 
-use crate::app::message::{Filter, Msg, Options_};
+use crate::app::message::{Filter, Message, Options_};
 use crate::app::state::{Model, UiState};
 use crate::app::state::OptionsTab;
 use crate::ui::themes::Theme;
@@ -12,7 +12,7 @@ pub fn render(
     ctx: &egui::Context,
     model: &Model,
     ui_state: &UiState,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
 ) {
     let center = ctx.content_rect().center();
     let title_bar_height = 32.0;
@@ -75,7 +75,7 @@ pub fn render(
             }
 
             if close_response.clicked() {
-                sender.send(Msg::Options(Options_::Closed)).ok();
+                sender.send(Message::Options(Options_::Closed)).ok();
             }
 
             ui.separator();
@@ -99,25 +99,25 @@ pub fn render(
         });
 }
 
-fn render_tab_bar(ui: &mut egui::Ui, ui_state: &UiState, sender: &Sender<Msg>) {
+fn render_tab_bar(ui: &mut egui::Ui, ui_state: &UiState, sender: &Sender<Message>) {
     ui.horizontal(|ui| {
         let mut current = ui_state.options_tab;
 
         if ui.selectable_value(&mut current, OptionsTab::General, "General").clicked() {
-            sender.send(Msg::Options(Options_::TabChanged(OptionsTab::General))).ok();
+            sender.send(Message::Options(Options_::TabChanged(OptionsTab::General))).ok();
         }
 
         if ui.selectable_value(&mut current, OptionsTab::Includes, "Include").clicked() {
-            sender.send(Msg::Options(Options_::TabChanged(OptionsTab::Includes))).ok();
+            sender.send(Message::Options(Options_::TabChanged(OptionsTab::Includes))).ok();
         }
 
         if ui.selectable_value(&mut current, OptionsTab::Excludes, "Exclude").clicked() {
-            sender.send(Msg::Options(Options_::TabChanged(OptionsTab::Excludes))).ok();
+            sender.send(Message::Options(Options_::TabChanged(OptionsTab::Excludes))).ok();
         }
     });
 }
 
-fn render_general(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg>) {
+fn render_general(ui: &mut egui::Ui, model: &Model, sender: &Sender<Message>) {
     egui::Frame::dark_canvas(ui.style())
         .fill(ui.visuals().extreme_bg_color)
         .inner_margin(8.0)
@@ -157,24 +157,24 @@ fn render_general(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg>) {
         });
 }
 
-fn render_display_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg>) {
+fn render_display_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Message>) {
     ui.label(egui::RichText::new("Display").strong().color(ui.visuals().weak_text_color()));
     ui.add_space(5.0);
 
     let mut use_icon = model.options.use_icon;
 
     if ui.checkbox(&mut use_icon, "Use icons in tree").clicked() {
-        sender.send(Msg::Options(Options_::UseIconChanged(use_icon))).ok();
+        sender.send(Message::Options(Options_::UseIconChanged(use_icon))).ok();
     }
 
     let mut show_hidden = model.options.show_hidden;
 
     if ui.checkbox(&mut show_hidden, "Show hidden files").clicked() {
-        sender.send(Msg::Options(Options_::ShowHiddenChanged(show_hidden))).ok();
+        sender.send(Message::Options(Options_::ShowHiddenChanged(show_hidden))).ok();
     }
 }
 
-fn render_output_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg>) {
+fn render_output_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Message>) {
     ui.label(egui::RichText::new("Output").strong().color(ui.visuals().weak_text_color()));
     ui.add_space(5.0);
 
@@ -187,31 +187,31 @@ fn render_output_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg>)
             .show_ui(ui, |ui| {
                 for format in crate::model::output::OutputFormat::all() {
                     if ui.selectable_label(model.options.output_format == *format, format.name()).clicked() {
-                        sender.send(Msg::Options(Options_::OutputFormatChanged(*format))).ok();
+                        sender.send(Message::Options(Options_::OutputFormatChanged(*format))).ok();
                     }
                 }
             });
     });
 }
 
-fn render_behavior_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg>) {
+fn render_behavior_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Message>) {
     ui.label(egui::RichText::new("Behavior").strong().color(ui.visuals().weak_text_color()));
     ui.add_space(5.0);
 
     let mut delete_sessions = model.options.delete_sessions_on_exit;
 
     if ui.checkbox(&mut delete_sessions, "Delete session(s) upon exiting").clicked() {
-        sender.send(Msg::Options(Options_::DeleteSessionsChanged(delete_sessions))).ok();
+        sender.send(Message::Options(Options_::DeleteSessionsChanged(delete_sessions))).ok();
     }
 
     let mut single_instance = model.options.single_instance;
 
     if ui.checkbox(&mut single_instance, "Use a single instance (requires restart)").clicked() {
-        sender.send(Msg::Options(Options_::SingleInstanceChanged(single_instance))).ok();
+        sender.send(Message::Options(Options_::SingleInstanceChanged(single_instance))).ok();
     }
 }
 
-fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Msg>) {
+fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Message>) {
     ui.label(egui::RichText::new("Appearance").strong().color(ui.visuals().weak_text_color()));
     ui.add_space(5.0);
 
@@ -224,7 +224,7 @@ fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<M
             .show_ui(ui, |ui| {
                 for theme in Theme::all() {
                     if ui.selectable_label(model.options.theme == *theme, theme.name()).clicked() {
-                        sender.send(Msg::Options(Options_::ThemeChanged(*theme))).ok();
+                        sender.send(Message::Options(Options_::ThemeChanged(*theme))).ok();
                     }
                 }
             });
@@ -245,12 +245,12 @@ fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<M
         );
 
         if slider.changed() {
-            sender.send(Msg::Options(Options_::UiScaleChanged(scale))).ok();
+            sender.send(Message::Options(Options_::UiScaleChanged(scale))).ok();
         }
 
         if model.options.ui_scale.is_some() {
             if ui.button("Reset").clicked() {
-                sender.send(Msg::Options(Options_::UiScaleReset)).ok();
+                sender.send(Message::Options(Options_::UiScaleReset)).ok();
             }
         }
     });
@@ -276,17 +276,17 @@ fn render_integration_section(ui: &mut egui::Ui) {
     });
 }
 
-fn render_includes(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender: &Sender<Msg>) {
+fn render_includes(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender: &Sender<Message>) {
     egui::Frame::NONE
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 render_filter_input(
                     ui,
-                    &ui_state.new_include_filter,
+                    &ui_state.filter_include_new,
                     "Enter pattern (e.g., *.rs, *.txt)",
-                    |filter| Msg::Filter(Filter::IncludeAdded(filter)),
-                    |filter| Msg::Filter(Filter::IncludeFilterChanged(filter)),
+                    |filter| Message::Filter(Filter::IncludeAdded(filter)),
+                    |filter| Message::Filter(Filter::IncludeFilterChanged(filter)),
                     sender
                 );
 
@@ -297,17 +297,17 @@ fn render_includes(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender:
         });
 }
 
-fn render_excludes(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender: &Sender<Msg>) {
+fn render_excludes(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender: &Sender<Message>) {
     egui::Frame::NONE
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
             ui.vertical(|ui| {
                 render_filter_input(
                     ui,
-                    &ui_state.new_exclude_filter,
+                    &ui_state.filter_exclude_new,
                     "Enter pattern (e.g., *.log, node_modules)",
-                    |filter| Msg::Filter(Filter::ExcludeAdded(filter)),
-                    |filter| Msg::Filter(Filter::ExcludeFilterChanged(filter)),
+                    |filter| Message::Filter(Filter::ExcludeAdded(filter)),
+                    |filter| Message::Filter(Filter::ExcludeFilterChanged(filter)),
                     sender
                 );
 
@@ -322,12 +322,12 @@ fn render_filter_input<F, G>(
     ui: &mut egui::Ui,
     current_value: &str,
     hint: &str,
-    create_add_msg: F,
-    create_change_msg: G,
-    sender: &Sender<Msg>,
+    create_add_message: F,
+    create_change_message: G,
+    sender: &Sender<Message>,
 ) where
-    F: Fn(String) -> Msg,
-    G: Fn(String) -> Msg,
+    F: Fn(String) -> Message,
+    G: Fn(String) -> Message,
 {
     ui.horizontal(|ui| {
         let mut filter = current_value.to_string();
@@ -339,7 +339,7 @@ fn render_filter_input<F, G>(
         );
 
         if response.changed() {
-            sender.send(create_change_msg(filter.clone())).ok();
+            sender.send(create_change_message(filter.clone())).ok();
         }
 
         let add_enabled = !filter.trim().is_empty();
@@ -348,7 +348,7 @@ fn render_filter_input<F, G>(
         if ui.add_enabled(add_enabled, egui::Button::new("Add")).clicked()
             || (enter && response.has_focus() && add_enabled)
         {
-            sender.send(create_add_msg(filter)).ok();
+            sender.send(create_add_message(filter)).ok();
         }
     });
 }
@@ -356,7 +356,7 @@ fn render_filter_input<F, G>(
 fn render_filter_list(
     ui: &mut egui::Ui,
     filters: &[String],
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
     is_include: bool,
 ) {
     egui::Frame::dark_canvas(ui.style())
@@ -404,7 +404,7 @@ fn render_filter_tag(
     ui: &mut egui::Ui,
     filter: &str,
     index: usize,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
     is_include: bool,
 ) {
     let available_width = ui.available_width();
@@ -438,13 +438,13 @@ fn render_filter_tag(
                         );
 
                         if delete.clicked() {
-                            let msg = if is_include {
-                                Msg::Filter(Filter::IncludeRemoved(index))
+                            let message = if is_include {
+                                Message::Filter(Filter::IncludeRemoved(index))
                             } else {
-                                Msg::Filter(Filter::ExcludeRemoved(index))
+                                Message::Filter(Filter::ExcludeRemoved(index))
                             };
 
-                            sender.send(msg).ok();
+                            sender.send(message).ok();
                         }
                     });
                 },
@@ -453,7 +453,7 @@ fn render_filter_tag(
     });
 }
 
-fn render_bottom_buttons(ui: &mut egui::Ui, ui_state: &UiState, sender: &Sender<Msg>) {
+fn render_bottom_buttons(ui: &mut egui::Ui, ui_state: &UiState, sender: &Sender<Message>) {
     egui::Frame::NONE
         .inner_margin(egui::Margin::same(8))
         .show(ui, |ui| {
@@ -463,12 +463,12 @@ fn render_bottom_buttons(ui: &mut egui::Ui, ui_state: &UiState, sender: &Sender<
                 match ui_state.options_tab {
                     OptionsTab::Includes => {
                         if ui.button("Reset to Default").clicked() {
-                            sender.send(Msg::Filter(Filter::IncludesCleared)).ok();
+                            sender.send(Message::Filter(Filter::IncludesCleared)).ok();
                         }
                     }
                     OptionsTab::Excludes => {
                         if ui.button("Reset to Default").clicked() {
-                            sender.send(Msg::Filter(Filter::ExcludesReset)).ok();
+                            sender.send(Message::Filter(Filter::ExcludesReset)).ok();
                         }
                     }
                     _ => {}

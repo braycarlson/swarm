@@ -2,7 +2,7 @@ use std::sync::mpsc::Sender;
 
 use eframe::egui;
 
-use crate::app::message::{Copy, Msg, Render, Skeleton};
+use crate::app::message::{Copy, Message, Render, Skeleton};
 use crate::app::state::{LoadStatus, Model, UiState};
 use crate::app::state::ui::GenerateMode;
 
@@ -10,7 +10,7 @@ pub fn render(
     ui: &mut egui::Ui,
     model: &Model,
     ui_state: &UiState,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
 ) {
     egui::Panel::bottom("bottom_panel")
         .min_size(40.0)
@@ -23,7 +23,7 @@ pub fn render(
                     let row_height = ui.spacing().interact_size.y;
                     let padding = 8.0;
 
-                    let tree_is_loading = matches!(model.tree.load_status, LoadStatus::Loading { .. });
+                    let tree_is_loading = matches!(model.tree.status_load, LoadStatus::Loading { .. });
                     let can_copy = !ui_state.copy_in_progress && !tree_is_loading;
 
                     let copy_label = if ui_state.copy_in_progress {
@@ -36,7 +36,7 @@ pub fn render(
                         can_copy,
                         egui::Button::new(copy_label).min_size(egui::vec2(120.0, row_height + padding))
                     ).clicked() {
-                        let _ = sender.send(Msg::Copy(Copy::Requested));
+                        let _ = sender.send(Message::Copy(Copy::Requested));
                     }
 
                     render_generate_split_button(ui, ui_state, sender, row_height, padding, tree_is_loading);
@@ -44,10 +44,10 @@ pub fn render(
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(10.0);
 
-                        if matches!(model.tree.load_status, LoadStatus::Loading { .. }) {
+                        if matches!(model.tree.status_load, LoadStatus::Loading { .. }) {
                             ui.spinner();
 
-                            if let LoadStatus::Loading { message, .. } = &model.tree.load_status {
+                            if let LoadStatus::Loading { message, .. } = &model.tree.status_load {
                                 ui.label(
                                     egui::RichText::new(message)
                                         .color(ui.visuals().weak_text_color())
@@ -55,9 +55,9 @@ pub fn render(
                             }
                         }
 
-                        if !tree_is_loading && model.tree.file_count > 0 {
+                        if !tree_is_loading && model.tree.count_file > 0 {
                             ui.label(
-                                egui::RichText::new(format!("{} files", model.tree.file_count))
+                                egui::RichText::new(format!("{} files", model.tree.count_file))
                                     .color(ui.visuals().weak_text_color())
                             );
                         }
@@ -72,16 +72,16 @@ pub fn render(
 fn render_generate_split_button(
     ui: &mut egui::Ui,
     ui_state: &UiState,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
     row_height: f32,
     padding: f32,
     tree_is_loading: bool,
 ) {
-    let any_gen_in_progress = ui_state.tree_gen_in_progress || ui_state.skeleton_gen_in_progress;
-    let can_generate = !any_gen_in_progress && !tree_is_loading;
+    let any_generate_in_progress = ui_state.tree_generate_in_progress || ui_state.skeleton_generate_in_progress;
+    let can_generate = !any_generate_in_progress && !tree_is_loading;
     let button_height = row_height + padding;
 
-    let main_label = if any_gen_in_progress {
+    let main_label = if any_generate_in_progress {
         match ui_state.generate_mode {
             GenerateMode::Tree => "Generating...",
             GenerateMode::Skeleton => "Generating...",
@@ -102,10 +102,10 @@ fn render_generate_split_button(
     ).clicked() {
         match ui_state.generate_mode {
             GenerateMode::Tree => {
-                let _ = sender.send(Msg::Render(Render::Requested));
+                let _ = sender.send(Message::Render(Render::Requested));
             }
             GenerateMode::Skeleton => {
-                let _ = sender.send(Msg::Skeleton(Skeleton::Requested));
+                let _ = sender.send(Message::Skeleton(Skeleton::Requested));
             }
         }
     }
@@ -128,14 +128,14 @@ fn render_generate_split_button(
                 ui_state.generate_mode == GenerateMode::Tree,
                 "Generate Tree",
             ).clicked() {
-                let _ = sender.send(Msg::Skeleton(Skeleton::ModeChanged(GenerateMode::Tree)));
+                let _ = sender.send(Message::Skeleton(Skeleton::ModeChanged(GenerateMode::Tree)));
             }
 
             if ui.selectable_label(
                 ui_state.generate_mode == GenerateMode::Skeleton,
                 "Generate Skeleton",
             ).clicked() {
-                let _ = sender.send(Msg::Skeleton(Skeleton::ModeChanged(GenerateMode::Skeleton)));
+                let _ = sender.send(Message::Skeleton(Skeleton::ModeChanged(GenerateMode::Skeleton)));
             }
         });
 }

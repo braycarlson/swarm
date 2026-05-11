@@ -17,9 +17,9 @@ use super::language::Language;
 
 #[derive(Clone, Debug)]
 pub struct SkeletonStats {
-    pub file_count: usize,
-    pub line_count: usize,
-    pub token_count: usize,
+    pub count_file: usize,
+    pub count_line: usize,
+    pub count_token: usize,
 }
 
 #[derive(Clone)]
@@ -95,12 +95,12 @@ impl SkeletonGenerator {
             output.push('\n');
         }
 
-        let line_count = memchr::memchr_iter(b'\n', output.as_bytes()).count();
+        let count_line = memchr::memchr_iter(b'\n', output.as_bytes()).count();
 
         let stats = SkeletonStats {
-            file_count: files.len(),
-            line_count,
-            token_count: estimate_skeleton_tokens(&output),
+            count_file: files.len(),
+            count_line,
+            count_token: estimate_skeleton_tokens(&output),
         };
 
         Ok((output, stats))

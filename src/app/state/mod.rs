@@ -18,9 +18,9 @@ pub use ui::{FilterStatus, OptionsState, OptionsTab, UiState};
 #[derive(Clone)]
 pub struct FilteredNode {
     pub depth: usize,
-    pub index_path: Vec<usize>,
-    pub node_index: usize,
-    pub parent_path: Vec<usize>,
+    pub index_node: usize,
+    pub path_index: Vec<usize>,
+    pub path_parent: Vec<usize>,
     pub visible: bool,
 }
 

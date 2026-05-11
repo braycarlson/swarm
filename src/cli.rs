@@ -5,7 +5,7 @@ use std::process;
 use clap::{Parser, ValueEnum};
 use copypasta::{ClipboardContext, ClipboardProvider};
 
-use crate::app::state::search::{Command, ParsedQuery};
+use crate::app::state::search::{SearchCommand, ParsedQuery};
 use crate::model::options::Options;
 use crate::model::output::OutputFormat;
 use crate::services::filesystem::gather::GatherService;
@@ -128,8 +128,8 @@ fn output_result(output: &str, cli: &Cli) {
                     process::exit(1);
                 }
 
-                let line_count = memchr::memchr_iter(b'\n', output.as_bytes()).count();
-                eprintln!("Copied to clipboard ({} lines)", line_count);
+                let count_line = memchr::memchr_iter(b'\n', output.as_bytes()).count();
+                eprintln!("Copied to clipboard ({} lines)", count_line);
             }
             Err(error) => {
                 eprintln!("Error: failed to access clipboard: {}", error);
@@ -155,7 +155,7 @@ fn run_skeleton(path: &Path, options: &Options, cli: &Cli) -> String {
 
     match generator.generate(&paths, &override_options) {
         Ok((output, stats)) => {
-            eprintln!("{} files / {} lines / {} tokens", stats.file_count, stats.line_count, stats.token_count);
+            eprintln!("{} files / {} lines / {} tokens", stats.count_file, stats.count_line, stats.count_token);
             output
         }
         Err(error) => {
@@ -194,7 +194,7 @@ fn run_gather(path: &Path, options: &Options, cli: &Cli) -> String {
 
     match gather.gather_with_context(&paths, &override_options, Some(&git), Some(&query)) {
         Ok((output, stats)) => {
-            eprintln!("{} lines / {} tokens", stats.line_count, stats.token_count);
+            eprintln!("{} lines / {} tokens", stats.count_line, stats.count_token);
             output
         }
         Err(error) => {
@@ -211,7 +211,7 @@ fn build_parsed_query(cli: &Cli) -> ParsedQuery {
     };
 
     if cli.diff {
-        query.commands.push(Command::Diff);
+        query.commands.push(SearchCommand::Diff);
     }
 
     query

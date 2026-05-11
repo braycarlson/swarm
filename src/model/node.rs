@@ -26,24 +26,24 @@ pub struct FileNode {
     #[serde(skip)]
     pub metadata: Option<FileMetadata>,
     #[serde(skip)]
-    pub name_offset: u32,
+    pub offset_name: u32,
     pub path: PathBuf,
-    #[serde(skip, default = "empty_path_lower")]
-    pub path_lower: Arc<str>,
+    #[serde(skip, default = "empty_path_lowercase")]
+    pub path_lowercase: Arc<str>,
 }
 
-fn empty_path_lower() -> Arc<str> {
+fn empty_path_lowercase() -> Arc<str> {
     static EMPTY: OnceLock<Arc<str>> = OnceLock::new();
     EMPTY.get_or_init(|| Arc::from("")).clone()
 }
 
 fn compute_path_cache(path: &Path) -> (Arc<str>, u32) {
-    let path_lower = path.to_string_lossy().to_ascii_lowercase();
+    let path_lowercase = path.to_string_lossy().to_ascii_lowercase();
     let name_byte_len = path.file_name()
         .map(|n| n.to_string_lossy().len())
         .unwrap_or(0);
-    let name_offset = (path_lower.len() - name_byte_len) as u32;
-    (Arc::from(path_lower), name_offset)
+    let offset_name = (path_lowercase.len() - name_byte_len) as u32;
+    (Arc::from(path_lowercase), offset_name)
 }
 
 impl FileNode {
@@ -54,7 +54,7 @@ impl FileNode {
             NodeKind::File
         };
 
-        let (path_lower, name_offset) = compute_path_cache(&path);
+        let (path_lowercase, offset_name) = compute_path_cache(&path);
 
         Self {
             checked: false,
@@ -62,14 +62,14 @@ impl FileNode {
             kind,
             loaded: false,
             metadata: None,
-            name_offset,
+            offset_name,
             path,
-            path_lower,
+            path_lowercase,
         }
     }
 
     pub fn with_kind(path: PathBuf, kind: NodeKind) -> Self {
-        let (path_lower, name_offset) = compute_path_cache(&path);
+        let (path_lowercase, offset_name) = compute_path_cache(&path);
 
         Self {
             checked: false,
@@ -77,9 +77,9 @@ impl FileNode {
             kind,
             loaded: false,
             metadata: None,
-            name_offset,
+            offset_name,
             path,
-            path_lower,
+            path_lowercase,
         }
     }
 
@@ -92,7 +92,7 @@ impl FileNode {
     }
 
     pub fn name_lower(&self) -> &str {
-        &self.path_lower[self.name_offset as usize..]
+        &self.path_lowercase[self.offset_name as usize..]
     }
 
     pub fn has_children(&self) -> bool {
@@ -188,8 +188,8 @@ impl FileNode {
                 return false;
             }
 
-            if matches!(query.type_filter, Some(TypeFilter::Directory)) {
-                let self_matches = query.matches_full(self.name_lower(), &self.path_lower, None, true, None);
+            if matches!(query.filter_type, Some(TypeFilter::Directory)) {
+                let self_matches = query.matches_full(self.name_lower(), &self.path_lowercase, None, true, None);
 
                 let has_matching_children = self.children.iter().any(|child| {
                     child.matches_query_recursive(query, git, depth + 1)
@@ -213,26 +213,26 @@ impl FileNode {
                 return true;
             }
 
-            return query.matches_full(self.name_lower(), &self.path_lower, None, true, None);
+            return query.matches_full(self.name_lower(), &self.path_lowercase, None, true, None);
         }
 
         let git_status = git.map(|g| g.get_status(&self.path));
         let metadata = self.get_metadata_for_query(query);
 
-        if !query.matches_full(self.name_lower(), &self.path_lower, git_status, false, metadata.as_ref()) {
+        if !query.matches_full(self.name_lower(), &self.path_lowercase, git_status, false, metadata.as_ref()) {
             return false;
         }
 
-        if !query.content_patterns.is_empty() {
-            let matchers = crate::services::search::build_content_matchers(&query.content_patterns);
+        if !query.patterns_content.is_empty() {
+            let matchers = crate::services::search::build_content_matchers(&query.patterns_content);
 
             if !crate::services::search::content_matches(&self.path, &matchers) {
                 return false;
             }
         }
 
-        if !query.symbol_patterns.is_empty()
-            && !crate::services::search::symbol_matches(&self.path, &query.symbol_patterns)
+        if !query.patterns_symbol.is_empty()
+            && !crate::services::search::symbol_matches(&self.path, &query.patterns_symbol)
         {
             return false;
         }
@@ -336,9 +336,9 @@ impl FileNode {
     }
 
     pub fn recompute_cache(&mut self) {
-        let (path_lower, name_offset) = compute_path_cache(&self.path);
-        self.path_lower = path_lower;
-        self.name_offset = name_offset;
+        let (path_lowercase, offset_name) = compute_path_cache(&self.path);
+        self.path_lowercase = path_lowercase;
+        self.offset_name = offset_name;
 
         self.children.par_iter_mut().for_each(|child| {
             child.recompute_cache();
@@ -394,7 +394,7 @@ impl FileNodeBuilder {
             }
         });
 
-        let (path_lower, name_offset) = compute_path_cache(&path);
+        let (path_lowercase, offset_name) = compute_path_cache(&path);
 
         FileNode {
             checked: self.checked,
@@ -402,9 +402,9 @@ impl FileNodeBuilder {
             kind,
             loaded: self.loaded,
             metadata: self.metadata,
-            name_offset,
+            offset_name,
             path,
-            path_lower,
+            path_lowercase,
         }
     }
 }

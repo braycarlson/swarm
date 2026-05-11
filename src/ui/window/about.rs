@@ -2,11 +2,11 @@ use std::sync::mpsc::Sender;
 
 use eframe::egui;
 
-use crate::app::message::{App, Msg};
+use crate::app::message::{App, Message};
 use crate::constants::{APP_NAME, APP_VERSION};
 use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rect};
 
-pub fn render(ctx: &egui::Context, sender: &Sender<Msg>) {
+pub fn render(ctx: &egui::Context, sender: &Sender<Message>) {
     let center = ctx.content_rect().center();
     let title_bar_height = 32.0;
     let button_width = 46.0;
@@ -68,7 +68,7 @@ pub fn render(ctx: &egui::Context, sender: &Sender<Msg>) {
             }
 
             if close_response.clicked() {
-                sender.send(Msg::App(App::AboutClosed)).ok();
+                sender.send(Message::App(App::AboutClosed)).ok();
             }
 
             ui.separator();

@@ -12,11 +12,11 @@ use super::SearchModel;
 pub struct TreeModel {
     pub nodes: Vec<FileNode>,
     pub output: String,
-    pub load_status: LoadStatus,
+    pub status_load: LoadStatus,
     #[serde(skip)]
     pub states: Option<FxHashMap<PathBuf, bool>>,
     #[serde(skip)]
-    pub file_count: usize,
+    pub count_file: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -42,9 +42,9 @@ impl TreeModel {
         Self {
             nodes,
             output: String::new(),
-            load_status: LoadStatus::NotStarted,
+            status_load: LoadStatus::NotStarted,
             states: None,
-            file_count: 0,
+            count_file: 0,
         }
     }
 
@@ -90,7 +90,7 @@ impl TreeModel {
     }
 
     pub fn update_file_count(&mut self) {
-        self.file_count = self.count_files();
+        self.count_file = self.count_files();
     }
 }
 

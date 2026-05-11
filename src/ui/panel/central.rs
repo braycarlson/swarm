@@ -6,7 +6,7 @@ use std::os::windows::process::CommandExt;
 
 use eframe::egui;
 
-use crate::app::message::{Msg, Search, Tree};
+use crate::app::message::{Message, Search, Tree};
 use crate::app::state::{FilterStatus, Model, UiState};
 use crate::model::node::{FileNode, NodeKind};
 use crate::services::filesystem::git::GitService;
@@ -17,7 +17,7 @@ pub fn render(
     ui: &mut egui::Ui,
     model: &Model,
     ui_state: &UiState,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
 ) {
     egui::CentralPanel::default()
         .frame(
@@ -75,7 +75,7 @@ pub fn render(
             });
         });
 
-    if ui_state.show_bulk_select {
+    if ui_state.select_bulk_show {
         render_bulk_select_window(ui, ui_state, sender);
     }
 }
@@ -84,7 +84,7 @@ fn render_search_bar(
     ui: &mut egui::Ui,
     model: &Model,
     ui_state: &UiState,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
 ) {
     let row_height = ui.spacing().interact_size.y;
     let bar_height = row_height + 12.0;
@@ -123,7 +123,7 @@ fn render_search_bar(
                             );
 
                             if response.changed() {
-                                let _ = sender.send(Msg::Search(Search::QueryChanged(query)));
+                                let _ = sender.send(Message::Search(Search::QueryChanged(query)));
                             }
 
                             let current_query = ui_state.search_pending.as_ref()
@@ -166,7 +166,7 @@ fn render_search_bar(
                                 );
 
                                 if clear.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                    let _ = sender.send(Msg::Search(Search::Cleared));
+                                    let _ = sender.send(Message::Search(Search::Cleared));
                                 }
                             }
                         }
@@ -178,14 +178,14 @@ fn render_search_bar(
             egui::Button::new("Filter")
                 .min_size(egui::vec2(filter_width, bar_height))
         ).on_hover_text("Select files from a list").clicked() {
-            let _ = sender.send(Msg::Tree(Tree::BulkSelectToggled));
+            let _ = sender.send(Message::Tree(Tree::BulkSelectToggled));
         }
 
         if ui.add(
             egui::Button::new("Reload")
                 .min_size(egui::vec2(reload_width, bar_height))
         ).clicked() {
-            let _ = sender.send(Msg::Tree(Tree::RefreshRequested));
+            let _ = sender.send(Message::Tree(Tree::RefreshRequested));
         }
     });
 }
@@ -193,7 +193,7 @@ fn render_search_bar(
 fn render_bulk_select_window(
     ui: &mut egui::Ui,
     ui_state: &UiState,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
 ) {
     let center = ui.ctx().content_rect().center();
     let title_bar_height = 32.0;
@@ -256,13 +256,13 @@ fn render_bulk_select_window(
             }
 
             if close_response.clicked() {
-                sender.send(Msg::Tree(Tree::BulkSelectToggled)).ok();
+                sender.send(Message::Tree(Tree::BulkSelectToggled)).ok();
             }
 
             ui.separator();
             ui.add_space(4.0);
 
-            let mut text = ui_state.bulk_select_text.clone();
+            let mut text = ui_state.select_bulk_text.clone();
             let text_height = (ui.available_height() - 35.0).max(100.0);
 
             let response = ui.add_sized(
@@ -272,27 +272,27 @@ fn render_bulk_select_window(
             );
 
             if response.changed() {
-                sender.send(Msg::Tree(Tree::BulkSelectTextChanged(text))).ok();
+                sender.send(Message::Tree(Tree::BulkSelectTextChanged(text))).ok();
             }
 
             ui.add_space(4.0);
 
-            let has_text = !ui_state.bulk_select_text.trim().is_empty();
+            let has_text = !ui_state.select_bulk_text.trim().is_empty();
 
             if ui.add_enabled(has_text, egui::Button::new("Select")).clicked() {
-                sender.send(Msg::Tree(Tree::BulkSelectApplied)).ok();
+                sender.send(Message::Tree(Tree::BulkSelectApplied)).ok();
             }
         });
 }
 
-fn show_tree_context_menu(ui: &mut egui::Ui, sender: &Sender<Msg>) {
+fn show_tree_context_menu(ui: &mut egui::Ui, sender: &Sender<Message>) {
     if ui.button("Select All").clicked() {
-        sender.send(Msg::Tree(Tree::SelectAll)).ok();
+        sender.send(Message::Tree(Tree::SelectAll)).ok();
         ui.close();
     }
 
     if ui.button("Deselect All").clicked() {
-        sender.send(Msg::Tree(Tree::DeselectAll)).ok();
+        sender.send(Message::Tree(Tree::DeselectAll)).ok();
         ui.close();
     }
 }
@@ -302,7 +302,7 @@ fn render_tree_nodes(
     nodes: &[FileNode],
     model: &Model,
     git: &GitService,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
 ) {
     let query = model.search.parsed();
 
@@ -318,7 +318,7 @@ fn render_node(
     depth: usize,
     model: &Model,
     git: &GitService,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
     query: &crate::app::state::search::ParsedQuery,
 ) {
     if !should_show_node_at_depth(node, &model.search, Some(git), depth, query) {
@@ -332,7 +332,7 @@ fn render_node(
             ui.horizontal(|ui| {
                 let mut checked = node.checked;
                 if ui.checkbox(&mut checked, "").clicked() {
-                    sender.send(Msg::Tree(Tree::NodeToggled {
+                    sender.send(Message::Tree(Tree::NodeToggled {
                         path: path.clone(),
                         checked,
                         propagate: false,
@@ -342,7 +342,7 @@ fn render_node(
                 let response = ui.selectable_label(node.checked, &label);
 
                 if response.clicked() {
-                    sender.send(Msg::Tree(Tree::NodeToggled {
+                    sender.send(Message::Tree(Tree::NodeToggled {
                         path: path.clone(),
                         checked: !node.checked,
                         propagate: false,
@@ -365,7 +365,7 @@ fn render_node(
                     let toggle_label = if node.checked { "Deselect" } else { "Select" };
 
                     if ui.button(toggle_label).clicked() {
-                        sender.send(Msg::Tree(Tree::NodeToggled {
+                        sender.send(Message::Tree(Tree::NodeToggled {
                             path,
                             checked: !node.checked,
                             propagate: false,
@@ -392,7 +392,7 @@ fn render_node(
             ui.horizontal(|ui| {
                 let mut checked = node.checked;
                 if ui.checkbox(&mut checked, "").clicked() {
-                    sender.send(Msg::Tree(Tree::NodeToggled {
+                    sender.send(Message::Tree(Tree::NodeToggled {
                         path: path.clone(),
                         checked,
                         propagate: true,
@@ -407,7 +407,7 @@ fn render_node(
 
                 let cr = header.show(ui, |ui| {
                     if !node.loaded {
-                        sender.send(Msg::Tree(Tree::NodeExpanded { path: path.clone() })).ok();
+                        sender.send(Message::Tree(Tree::NodeExpanded { path: path.clone() })).ok();
                         ui.spinner();
                         ui.label("Loading...");
                     } else {
@@ -421,7 +421,7 @@ fn render_node(
 
                 cr.header_response.context_menu(|ui| {
                     if ui.button("Select All").clicked() {
-                        sender.send(Msg::Tree(Tree::NodeToggled {
+                        sender.send(Message::Tree(Tree::NodeToggled {
                             path: path.clone(),
                             checked: true,
                             propagate: true,
@@ -430,7 +430,7 @@ fn render_node(
                     }
 
                     if ui.button("Deselect All").clicked() {
-                        sender.send(Msg::Tree(Tree::NodeToggled {
+                        sender.send(Message::Tree(Tree::NodeToggled {
                             path: path.clone(),
                             checked: false,
                             propagate: true,

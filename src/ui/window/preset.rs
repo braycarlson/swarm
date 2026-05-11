@@ -2,11 +2,11 @@ use std::sync::mpsc::Sender;
 
 use eframe::egui;
 
-use crate::app::message::{Msg, Preset_};
+use crate::app::message::{Message, Preset_};
 use crate::app::state::{Model, UiState};
 use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rect};
 
-pub fn render_save(ctx: &egui::Context, ui_state: &UiState, sender: &Sender<Msg>) {
+pub fn render_save(ctx: &egui::Context, ui_state: &UiState, sender: &Sender<Message>) {
     let center = ctx.content_rect().center();
     let title_bar_height = 32.0;
     let button_width = 46.0;
@@ -68,7 +68,7 @@ pub fn render_save(ctx: &egui::Context, ui_state: &UiState, sender: &Sender<Msg>
             }
 
             if close_response.clicked() {
-                sender.send(Msg::Preset(Preset_::SaveDialogClosed)).ok();
+                sender.send(Message::Preset(Preset_::SaveDialogClosed)).ok();
             }
 
             ui.separator();
@@ -83,7 +83,7 @@ pub fn render_save(ctx: &egui::Context, ui_state: &UiState, sender: &Sender<Msg>
                 );
 
                 if response.changed() {
-                    sender.send(Msg::Preset(Preset_::NameChanged(name.clone()))).ok();
+                    sender.send(Message::Preset(Preset_::NameChanged(name.clone()))).ok();
                 }
 
                 response.request_focus();
@@ -92,17 +92,17 @@ pub fn render_save(ctx: &egui::Context, ui_state: &UiState, sender: &Sender<Msg>
 
                 let mut include_selection = ui_state.preset_include_selection;
                 if ui.checkbox(&mut include_selection, "Include selection").clicked() {
-                    sender.send(Msg::Preset(Preset_::IncludeSelectionChanged(include_selection))).ok();
+                    sender.send(Message::Preset(Preset_::IncludeSelectionChanged(include_selection))).ok();
                 }
 
                 let mut include_search = ui_state.preset_include_search;
                 if ui.checkbox(&mut include_search, "Include search/filter").clicked() {
-                    sender.send(Msg::Preset(Preset_::IncludeSearchChanged(include_search))).ok();
+                    sender.send(Message::Preset(Preset_::IncludeSearchChanged(include_search))).ok();
                 }
 
                 let mut generic = ui_state.preset_generic;
                 if ui.checkbox(&mut generic, "Generic (available in any project)").clicked() {
-                    sender.send(Msg::Preset(Preset_::GenericChanged(generic))).ok();
+                    sender.send(Message::Preset(Preset_::GenericChanged(generic))).ok();
                 }
 
                 ui.add_space(8.0);
@@ -116,18 +116,18 @@ pub fn render_save(ctx: &egui::Context, ui_state: &UiState, sender: &Sender<Msg>
                     if ui.add_enabled(can_save, egui::Button::new("Save")).clicked()
                         || (enter && can_save)
                     {
-                        sender.send(Msg::Preset(Preset_::Saved(name.trim().to_string()))).ok();
+                        sender.send(Message::Preset(Preset_::Saved(name.trim().to_string()))).ok();
                     }
 
                     if ui.button("Cancel").clicked() {
-                        sender.send(Msg::Preset(Preset_::SaveDialogClosed)).ok();
+                        sender.send(Message::Preset(Preset_::SaveDialogClosed)).ok();
                     }
                 });
             });
         });
 }
 
-pub fn render_load(ctx: &egui::Context, model: &Model, sender: &Sender<Msg>) {
+pub fn render_load(ctx: &egui::Context, model: &Model, sender: &Sender<Message>) {
     let center = ctx.content_rect().center();
     let title_bar_height = 32.0;
     let button_width = 46.0;
@@ -192,7 +192,7 @@ pub fn render_load(ctx: &egui::Context, model: &Model, sender: &Sender<Msg>) {
             }
 
             if close_response.clicked() {
-                sender.send(Msg::Preset(Preset_::LoadDialogClosed)).ok();
+                sender.send(Message::Preset(Preset_::LoadDialogClosed)).ok();
             }
 
             ui.separator();
@@ -227,12 +227,12 @@ pub fn render_load(ctx: &egui::Context, model: &Model, sender: &Sender<Msg>) {
                                         let response = ui.selectable_label(false, &preset.name);
 
                                         if response.clicked() {
-                                            sender.send(Msg::Preset(Preset_::Loaded(preset.id.clone()))).ok();
+                                            sender.send(Message::Preset(Preset_::Loaded(preset.id.clone()))).ok();
                                         }
 
                                         response.context_menu(|ui| {
                                             if ui.button("Delete").clicked() {
-                                                sender.send(Msg::Preset(Preset_::Deleted(preset.id.clone()))).ok();
+                                                sender.send(Message::Preset(Preset_::Deleted(preset.id.clone()))).ok();
                                                 ui.close();
                                             }
                                         });

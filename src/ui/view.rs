@@ -2,7 +2,7 @@ use std::sync::mpsc::Sender;
 
 use eframe::egui;
 
-use crate::app::message::Msg;
+use crate::app::message::Message;
 use crate::app::state::{Model, UiState};
 
 use super::panel::menu;
@@ -19,7 +19,7 @@ impl View {
         ui: &mut egui::Ui,
         model: &Model,
         ui_state: &UiState,
-        sender: &Sender<Msg>,
+        sender: &Sender<Message>,
     ) {
         menu::render(ui, model, ui_state, sender);
         bottom::render(ui, model, ui_state, sender);
@@ -27,19 +27,19 @@ impl View {
 
         let ctx = ui.ctx();
 
-        if ui_state.show_options {
+        if ui_state.options_show {
             options::render(ctx, model, ui_state, sender);
         }
 
-        if ui_state.show_about {
+        if ui_state.about_show {
             about::render(ctx, sender);
         }
 
-        if ui_state.show_save_preset {
+        if ui_state.preset_save_show {
             preset::render_save(ctx, ui_state, sender);
         }
 
-        if ui_state.show_load_preset {
+        if ui_state.preset_load_show {
             preset::render_load(ctx, model, sender);
         }
     }
