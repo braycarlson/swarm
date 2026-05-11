@@ -7,7 +7,7 @@ use std::thread;
 use crate::app::message::{App, Message};
 
 pub struct IpcListener {
-    address_bind: String,
+    bind_address: String,
     connection_count_max: usize,
     sender: Sender<Message>,
 }
@@ -15,7 +15,7 @@ pub struct IpcListener {
 impl IpcListener {
     pub fn new(sender: Sender<Message>) -> Self {
         Self {
-            address_bind: "127.0.0.1:44287".to_string(),
+            bind_address: "127.0.0.1:44287".to_string(),
             connection_count_max: 1000,
             sender,
         }
@@ -30,10 +30,10 @@ impl IpcListener {
     }
 
     fn run(self) {
-        let listener = match TcpListener::bind(&self.address_bind) {
+        let listener = match TcpListener::bind(&self.bind_address) {
             Ok(listener) => listener,
             Err(error) => {
-                eprintln!("Failed to bind IPC listener to {}: {}", self.address_bind, error);
+                eprintln!("Failed to bind IPC listener to {}: {}", self.bind_address, error);
                 return;
             }
         };

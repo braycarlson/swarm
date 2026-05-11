@@ -47,7 +47,7 @@ impl SwarmApp {
 
         Self {
             model,
-            ui,
+            ui: ui,
             runtime,
             message_receiver,
             message_sender,
@@ -81,7 +81,7 @@ impl SwarmApp {
             }
         }
 
-        if self.ui.debounce_search.is_some() {
+        if self.ui.search_debounce.is_some() {
             messages.push(Message::Search(Search::DebounceTick));
         }
 
@@ -94,11 +94,11 @@ impl SwarmApp {
 
 impl eframe::App for SwarmApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
+        let context = ui.ctx().clone();
 
         crate::ui::widget::titlebar::titlebar::TitleBar::render(ui);
 
-        self.ui.theme.apply(&ctx);
+        self.ui.theme.apply(&context);
 
         let scale = if self.model.options.ui_scale.is_none() {
             ui.input(|i| {
@@ -111,7 +111,7 @@ impl eframe::App for SwarmApp {
             self.model.options.effective_ui_scale()
         };
 
-        ctx.set_pixels_per_point(scale);
+        context.set_pixels_per_point(scale);
 
         if !self.initialized {
             self.initialized = true;
@@ -122,10 +122,10 @@ impl eframe::App for SwarmApp {
 
             if has_initial_paths {
                 let session = SessionData::new("Session".to_string());
-                let session_id = session.id.clone();
+                let session_identifier = session.identifier.clone();
 
-                self.model.sessions.sessions.insert(session_id.clone(), session);
-                self.model.sessions.active_id = Some(session_id.clone());
+                self.model.sessions.sessions.insert(session_identifier.clone(), session);
+                self.model.sessions.active_identifier = Some(session_identifier.clone());
 
                 self.model.refresh_git_status();
 
@@ -138,7 +138,7 @@ impl eframe::App for SwarmApp {
                 let command = builder.build();
 
                 self.runtime.execute(command);
-            } else if self.model.sessions.active_id.is_some() {
+            } else if self.model.sessions.active_identifier.is_some() {
                 self.model.refresh_git_status();
                 self.dispatch(Message::App(App::Initialized));
             } else {
@@ -146,23 +146,23 @@ impl eframe::App for SwarmApp {
             }
         }
 
-        self.ui.toast.show(&ctx);
+        self.ui.toast.show(&context);
 
         self.process_messages();
 
         View::render(ui, &self.model, &self.ui, &self.message_sender);
 
         if matches!(
-            self.model.tree.status_load,
+            self.model.tree.load_status,
             state::LoadStatus::Loading { .. }
         ) || self.ui.copy_in_progress
-          || self.ui.tree_generate_in_progress
-          || self.ui.skeleton_generate_in_progress
-          || self.model.background_loader.is_running()
-          || self.ui.debounce_search.is_some()
-          || self.ui.filter_status == FilterStatus::Filtering
+           || self.ui.tree_generate_in_progress
+           || self.ui.skeleton_generate_in_progress
+           || self.model.background_loader.is_running()
+           || self.ui.search_debounce.is_some()
+           || self.ui.filter_status == FilterStatus::Filtering
         {
-            ctx.request_repaint();
+            context.request_repaint();
         }
     }
 
@@ -178,13 +178,13 @@ impl eframe::App for SwarmApp {
         }
 
         if self.model.options.delete_sessions_on_exit {
-            if let Some(dir) = dirs::data_local_dir() {
-                let sessions_dir = dir
+            if let Some(directory) = dirs::data_local_dir() {
+                let sessions_directory = directory
                     .join(crate::constants::APP_NAME.to_lowercase())
                     .join("sessions");
 
-                if sessions_dir.exists() {
-                    let _ = std::fs::remove_dir_all(sessions_dir);
+                if sessions_directory.exists() {
+                    let _ = std::fs::remove_dir_all(sessions_directory);
                 }
             }
         } else {

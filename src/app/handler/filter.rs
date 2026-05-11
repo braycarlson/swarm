@@ -1,8 +1,8 @@
 use crate::app::message::{Command, Filter};
 use crate::app::state::{Model, UiState};
 
-pub fn handle(model: &mut Model, ui: &mut UiState, msg: Filter) -> Command {
-    match msg {
+pub fn handle(model: &mut Model, ui: &mut UiState, message: Filter) -> Command {
+    match message {
         Filter::IncludeAdded(filter) => handle_include_filter_added(model, ui, filter),
         Filter::IncludeRemoved(index) => handle_include_filter_removed(model, index),
         Filter::IncludesCleared => handle_include_filters_cleared(model),

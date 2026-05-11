@@ -15,8 +15,8 @@ use super::git::GitService;
 
 #[derive(Clone, Debug)]
 pub struct GatherStats {
-    pub count_line: usize,
-    pub count_token: usize,
+    pub line_count: usize,
+    pub token_count: usize,
 }
 
 #[derive(Clone)]
@@ -43,8 +43,8 @@ impl GatherService {
 
         let include_diff = query.is_some_and(|q| q.has_command(SearchCommand::Diff));
 
-        for path_str in paths {
-            let path = Path::new(path_str.trim());
+        for string_path in paths {
+            let path = Path::new(string_path.trim());
             let clean_path = path.clean_path();
 
             if !clean_path.exists() {
@@ -66,12 +66,12 @@ impl GatherService {
 
         let output = output_format.format(&files)?;
 
-        let count_line = memchr::memchr_iter(b'\n', output.as_bytes()).count();
-        let count_token = estimate_tokens(&output);
+        let line_count = memchr::memchr_iter(b'\n', output.as_bytes()).count();
+        let token_count = estimate_tokens(&output);
 
         let stats = GatherStats {
-            count_line,
-            count_token,
+            line_count,
+            token_count,
         };
 
         Ok((output, stats))
@@ -150,7 +150,7 @@ impl GatherService {
                     match result {
                         Ok(entry) => {
                             if !filter.should_include(entry.path()) {
-                                if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                                if entry.file_type().is_some_and(|type_file| type_file.is_dir()) {
                                     if !local.is_empty() {
                                         for path in local.drain(..) {
                                             let _ = sender.send(path);
@@ -161,7 +161,7 @@ impl GatherService {
                                 return ignore::WalkState::Continue;
                             }
 
-                            if entry.file_type().is_some_and(|ft| ft.is_file()) {
+                            if entry.file_type().is_some_and(|type_file| type_file.is_file()) {
                                 local.push(entry.into_path());
 
                                 if local.len() >= 64 {

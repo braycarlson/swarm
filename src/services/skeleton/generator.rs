@@ -17,9 +17,9 @@ use super::language::Language;
 
 #[derive(Clone, Debug)]
 pub struct SkeletonStats {
-    pub count_file: usize,
-    pub count_line: usize,
-    pub count_token: usize,
+    pub files_count: usize,
+    pub line_count: usize,
+    pub token_count: usize,
 }
 
 #[derive(Clone)]
@@ -66,8 +66,8 @@ impl SkeletonGenerator {
 
         let mut all_paths = Vec::new();
 
-        for path_str in paths {
-            let path = Path::new(path_str);
+        for string_path in paths {
+            let path = Path::new(string_path);
 
             if path.is_dir() {
                 let walked = Self::walk_parallel(path, &filter);
@@ -84,10 +84,10 @@ impl SkeletonGenerator {
 
         files.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let approx_capacity: usize = files.iter()
+        let approximate_capacity: usize = files.iter()
             .map(|(p, s)| p.len() + s.len() + 4)
             .sum();
-        let mut output = String::with_capacity(approx_capacity);
+        let mut output = String::with_capacity(approximate_capacity);
 
         for (path, skeleton) in &files {
             let _ = writeln!(output, "[{}]", path);
@@ -95,12 +95,12 @@ impl SkeletonGenerator {
             output.push('\n');
         }
 
-        let count_line = memchr::memchr_iter(b'\n', output.as_bytes()).count();
+        let line_count = memchr::memchr_iter(b'\n', output.as_bytes()).count();
 
         let stats = SkeletonStats {
-            count_file: files.len(),
-            count_line,
-            count_token: estimate_skeleton_tokens(&output),
+            files_count: files.len(),
+            line_count,
+            token_count: estimate_skeleton_tokens(&output),
         };
 
         Ok((output, stats))
@@ -124,7 +124,7 @@ impl SkeletonGenerator {
                     match result {
                         Ok(entry) => {
                             if !filter.should_include(entry.path()) {
-                                if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                                if entry.file_type().is_some_and(|type_file| type_file.is_dir()) {
                                     if !local.is_empty() {
                                         for path in local.drain(..) {
                                             let _ = sender.send(path);
@@ -135,7 +135,7 @@ impl SkeletonGenerator {
                                 return ignore::WalkState::Continue;
                             }
 
-                            if entry.file_type().is_some_and(|ft| ft.is_file()) {
+                            if entry.file_type().is_some_and(|type_file| type_file.is_file()) {
                                 local.push(entry.into_path());
 
                                 if local.len() >= 64 {
@@ -257,8 +257,8 @@ fn extract_skeleton(content: &str, language: Language) -> Option<String> {
             }
         }
 
-        let new_len = output.trim_end().len();
-        output.truncate(new_len);
+        let new_length = output.trim_end().len();
+        output.truncate(new_length);
 
         if output.is_empty() {
             return None;
@@ -281,20 +281,20 @@ fn extract_definition(
     language: Language,
     depth: usize,
 ) {
-    let ind = indent(depth);
+    let indentation = indent(depth);
 
     if let Some(body) = find_body(node, language) {
-        let sig = source[node.start_byte()..body.start_byte()].trim_end();
+        let signature = source[node.start_byte()..body.start_byte()].trim_end();
 
-        for line in sig.lines() {
+        for line in signature.lines() {
             if line.trim().is_empty() {
                 continue;
             }
 
-            let _ = writeln!(output, "{}{}", ind, line);
+            let _ = writeln!(output, "{}{}", indentation, line);
         }
 
-        let _ = writeln!(output, "{}{}", ind, language.ellipsis());
+        let _ = writeln!(output, "{}{}", indentation, language.ellipsis());
     } else {
         let text = node_text(node, source);
 
@@ -303,7 +303,7 @@ fn extract_definition(
                 continue;
             }
 
-            let _ = writeln!(output, "{}{}", ind, line);
+            let _ = writeln!(output, "{}{}", indentation, line);
         }
     }
 }
@@ -315,29 +315,29 @@ fn extract_class(
     language: Language,
     depth: usize,
 ) {
-    let ind = indent(depth);
+    let indentation = indent(depth);
 
     if let Some(body) = find_body(node, language) {
-        let sig = source[node.start_byte()..body.start_byte()].trim_end();
+        let signature = source[node.start_byte()..body.start_byte()].trim_end();
 
         match language {
             Language::Python => {
-                let _ = writeln!(output, "{}{}", ind, sig);
+                let _ = writeln!(output, "{}{}", indentation, signature);
                 extract_class_body(output, body, source, language, depth + 1);
             }
             Language::Css => {
                 if let Some(collapsed) = try_collapse_css_body(body, source, language) {
-                    let _ = writeln!(output, "{}{} {{ {} }}", ind, sig, collapsed);
+                    let _ = writeln!(output, "{}{} {{ {} }}", indentation, signature, collapsed);
                 } else {
-                    let _ = writeln!(output, "{}{} {{", ind, sig);
+                    let _ = writeln!(output, "{}{} {{", indentation, signature);
                     extract_class_body(output, body, source, language, depth + 1);
-                    let _ = writeln!(output, "{}}}", ind);
+                    let _ = writeln!(output, "{}}}", indentation);
                 }
             }
             _ => {
-                let _ = writeln!(output, "{}{} {{", ind, sig);
+                let _ = writeln!(output, "{}{} {{", indentation, signature);
                 extract_class_body(output, body, source, language, depth + 1);
-                let _ = writeln!(output, "{}}}", ind);
+                let _ = writeln!(output, "{}}}", indentation);
             }
         }
     } else {
@@ -348,7 +348,7 @@ fn extract_class(
                 continue;
             }
 
-            let _ = writeln!(output, "{}{}", ind, line);
+            let _ = writeln!(output, "{}{}", indentation, line);
         }
     }
 }
@@ -377,17 +377,17 @@ fn try_collapse_css_body(body: Node, source: &str, language: Language) -> Option
 
     if language.definition_types().contains(&kind) {
         if let Some(body) = find_body(child, language) {
-            let sig = source[child.start_byte()..body.start_byte()].trim_end();
-            return Some(format!("{}{}", sig, language.ellipsis()));
+            let signature = source[child.start_byte()..body.start_byte()].trim_end();
+            return Some(format!("{}{}", signature, language.ellipsis()));
         }
     }
 
     if language.class_types().contains(&kind) {
         if let Some(child_body) = find_body(child, language) {
-            let sig = source[child.start_byte()..child_body.start_byte()].trim_end();
+            let signature = source[child.start_byte()..child_body.start_byte()].trim_end();
 
             if let Some(collapsed) = try_collapse_css_body(child_body, source, language) {
-                return Some(format!("{} {{ {} }}", sig, collapsed));
+                return Some(format!("{} {{ {} }}", signature, collapsed));
             }
         }
     }
@@ -402,7 +402,7 @@ fn extract_class_body(
     language: Language,
     depth: usize,
 ) {
-    let ind = indent(depth);
+    let indentation = indent(depth);
     let mut cursor = body.walk();
 
     let has_skeleton_content = body.children(&mut cursor).any(|child| {
@@ -413,7 +413,7 @@ fn extract_class_body(
     });
 
     if !has_skeleton_content {
-        let _ = writeln!(output, "{}...", ind);
+        let _ = writeln!(output, "{}...", indentation);
         return;
     }
 
@@ -439,7 +439,7 @@ fn extract_wrapper(
     language: Language,
     depth: usize,
 ) {
-    let ind = indent(depth);
+    let indentation = indent(depth);
     let mut cursor = node.walk();
 
     for child in node.children(&mut cursor) {
@@ -447,7 +447,7 @@ fn extract_wrapper(
 
         if kind == "decorator" || kind == "export" {
             let text = node_text(child, source);
-            let _ = writeln!(output, "{}{}", ind, text);
+            let _ = writeln!(output, "{}{}", indentation, text);
         } else if language.definition_types().contains(&kind) {
             extract_definition(output, child, source, language, depth);
         } else if language.class_types().contains(&kind) {
@@ -470,14 +470,14 @@ fn extract_constant(
         return;
     }
 
-    let ind = indent(depth);
+    let indentation = indent(depth);
     let text = node_text(node, source);
     let first_line = text.lines().next().unwrap_or("");
 
     if text.lines().count() > 1 {
         append_collapsed_assignment(output, node, source, depth);
     } else {
-        let _ = writeln!(output, "{}{}", ind, first_line);
+        let _ = writeln!(output, "{}{}", indentation, first_line);
     }
 }
 
@@ -506,7 +506,7 @@ fn extract_constant_with_definitions(
     language: Language,
     depth: usize,
 ) {
-    let ind = indent(depth);
+    let indentation = indent(depth);
     let mut replacements: Vec<(usize, usize, String)> = Vec::new();
 
     collect_definition_skeletons(node, source, language, &mut replacements);
@@ -515,22 +515,22 @@ fn extract_constant_with_definitions(
     let node_start = node.start_byte();
     let node_end = node.end_byte();
     let mut result = String::new();
-    let mut pos = node_start;
+    let mut position = node_start;
 
     for (start, end, skeleton) in &replacements {
-        result.push_str(&source[pos..*start]);
+        result.push_str(&source[position..*start]);
         result.push_str(skeleton);
-        pos = *end;
+        position = *end;
     }
 
-    result.push_str(&source[pos..node_end]);
+    result.push_str(&source[position..node_end]);
 
     for line in result.lines() {
         if line.trim().is_empty() {
             continue;
         }
 
-        let _ = writeln!(output, "{}{}", ind, line);
+        let _ = writeln!(output, "{}{}", indentation, line);
     }
 }
 
@@ -556,9 +556,9 @@ fn collect_definition_skeletons(
 
 fn build_definition_skeleton(node: Node, source: &str, language: Language) -> String {
     if let Some(body) = find_body(node, language) {
-        let sig = source[node.start_byte()..body.start_byte()].trim_end();
+        let signature = source[node.start_byte()..body.start_byte()].trim_end();
 
-        format!("{}{}", sig, language.ellipsis())
+        format!("{}{}", signature, language.ellipsis())
     } else {
         node_text(node, source).to_string()
     }
@@ -570,18 +570,18 @@ fn append_collapsed_assignment(
     source: &str,
     depth: usize,
 ) {
-    let ind = indent(depth);
+    let indentation = indent(depth);
     let text = node_text(node, source);
     let first_line = text.lines().next().unwrap_or("");
 
-    if let Some(paren_pos) = first_line.find('(') {
-        let _ = writeln!(output, "{}{}...)", ind, &first_line[..paren_pos + 1]);
-    } else if let Some(bracket_pos) = first_line.find('[') {
-        let _ = writeln!(output, "{}{}...]", ind, &first_line[..bracket_pos + 1]);
-    } else if let Some(brace_pos) = first_line.find('{') {
-        let _ = writeln!(output, "{}{}...}}", ind, &first_line[..brace_pos + 1]);
+    if let Some(parenthesis_position) = first_line.find('(') {
+        let _ = writeln!(output, "{}{}...)", indentation, &first_line[..parenthesis_position + 1]);
+    } else if let Some(bracket_position) = first_line.find('[') {
+        let _ = writeln!(output, "{}{}...]", indentation, &first_line[..bracket_position + 1]);
+    } else if let Some(brace_position) = first_line.find('{') {
+        let _ = writeln!(output, "{}{}...}}", indentation, &first_line[..brace_position + 1]);
     } else {
-        let _ = writeln!(output, "{}{} ...", ind, first_line.trim_end());
+        let _ = writeln!(output, "{}{} ...", indentation, first_line.trim_end());
     }
 }
 

@@ -6,7 +6,7 @@ use crate::app::state::{LoadStatus, Model, UiState};
 
 use super::sync_to_active_session;
 
-const IPC_PATHS_MAX: u32 = 100;
+const IPC_PATH_COUNT_MAX: u32 = 100;
 
 pub fn handle(model: &mut Model, ui: &mut UiState, message: App) -> Command {
     match message {
@@ -32,30 +32,30 @@ fn handle_app_initialized(model: &mut Model) -> Command {
 
 fn handle_restore_last_session(model: &mut Model) -> Command {
     if let Some(closed) = model.sessions.last_closed_session.take() {
-        let id = closed.id.clone();
+        let identifier = closed.identifier.clone();
 
         model.tree = closed.tree_state.clone();
         model.search = closed.search_state.clone();
-        model.tree.status_load = LoadStatus::Loaded;
+        model.tree.load_status = LoadStatus::Loaded;
 
-        model.sessions.sessions.insert(id.clone(), closed);
-        model.sessions.active_id = Some(id);
+        model.sessions.sessions.insert(identifier.clone(), closed);
+        model.sessions.active_identifier = Some(identifier);
 
         model.refresh_git_status();
 
         return Command::None;
     }
 
-    let most_recent_id = model.sessions.sessions.values()
+    let most_recent_identifier = model.sessions.sessions.values()
         .filter(|s| !s.tree_state.nodes.is_empty())
         .max_by_key(|s| s.last_modified)
-        .map(|s| s.id.clone());
+        .map(|s| s.identifier.clone());
 
-    if let Some(id) = most_recent_id {
-        if let Some(session) = model.sessions.select_session(id) {
+    if let Some(identifier) = most_recent_identifier {
+        if let Some(session) = model.sessions.select_session(identifier) {
             model.tree = session.tree_state.clone();
             model.search = session.search_state.clone();
-            model.tree.status_load = LoadStatus::Loaded;
+            model.tree.load_status = LoadStatus::Loaded;
 
             model.refresh_git_status();
         }
@@ -84,21 +84,21 @@ fn handle_path_selected(model: &mut Model, ui: &mut UiState, path: PathBuf) -> C
         model.tree = Default::default();
         model.search = Default::default();
     } else {
-        let active_id = model.sessions.active_id.clone();
+        let active_identifier = model.sessions.active_identifier.clone();
 
-        if active_id.is_none() {
+        if active_identifier.is_none() {
             return Command::None;
         }
     }
 
-    ui.dialog_file_pending = true;
+    ui.file_dialog_pending = true;
 
-    model.tree.status_load = LoadStatus::Loading {
+    model.tree.load_status = LoadStatus::Loading {
         message: format!("Loading {}", path.display()),
         progress: (0, 0),
     };
 
-    model.git.refresh(&path);
+    model.git_service.refresh(&path);
 
     command_builder = command_builder.add(Command::LoadSession {
         path,
@@ -125,16 +125,16 @@ fn handle_paths_from_ipc(model: &mut Model, _ui: &mut UiState, paths: Vec<PathBu
 
     let path_count = paths.len();
 
-    model.tree.status_load = LoadStatus::Loading {
+    model.tree.load_status = LoadStatus::Loading {
         message: format!("Loading {} paths", path_count),
         progress: (0, path_count),
     };
 
     if let Some(first_path) = paths.first() {
-        model.git.refresh(first_path);
+        model.git_service.refresh(first_path);
     }
 
-    for path in paths.into_iter().take(IPC_PATHS_MAX as usize) {
+    for path in paths.into_iter().take(IPC_PATH_COUNT_MAX as usize) {
         command_builder = command_builder.add(Command::LoadSession {
             path,
             options: Arc::clone(&model.options),

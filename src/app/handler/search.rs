@@ -38,7 +38,7 @@ fn handle_search_cleared(model: &mut Model, ui: &mut UiState) -> Command {
     model.search.clear();
     model.clear_filter_cache();
     ui.search_pending = None;
-    ui.debounce_search = None;
+    ui.search_debounce = None;
     ui.filter_status = FilterStatus::Idle;
     sync_to_active_session(model);
     Command::None
@@ -59,7 +59,7 @@ fn handle_debounce_tick(model: &mut Model, ui: &mut UiState) -> Command {
             return Command::StartExpensiveFilter {
                 entries,
                 query: parsed.into_owned(),
-                git: model.git.clone(),
+                git: model.git_service.clone(),
             };
         }
 

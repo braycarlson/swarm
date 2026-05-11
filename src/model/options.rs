@@ -13,7 +13,7 @@ pub struct Options {
     #[serde(default)]
     pub delete_sessions_on_exit: bool,
 
-    #[serde(default = "default_exclude_patterns")]
+    #[serde(default = "exclude_patterns_default")]
     pub exclude: Vec<String>,
 
     #[serde(default)]
@@ -25,7 +25,7 @@ pub struct Options {
     #[serde(default)]
     pub show_hidden: bool,
 
-    #[serde(default = "default_single_instance")]
+    #[serde(default = "single_instance_default")]
     pub single_instance: bool,
 
     #[serde(default)]
@@ -38,7 +38,7 @@ pub struct Options {
     pub use_icon: bool,
 }
 
-fn default_exclude_patterns() -> Vec<String> {
+fn exclude_patterns_default() -> Vec<String> {
     vec![
         // Version control
         ".git".into(),
@@ -368,7 +368,7 @@ fn default_exclude_patterns() -> Vec<String> {
     ]
 }
 
-fn default_single_instance() -> bool {
+fn single_instance_default() -> bool {
     true
 }
 
@@ -423,8 +423,8 @@ fn detect_screen_scale() -> Option<f32> {
             for line in stdout.lines() {
                 if line.contains('*') {
                     if let Some(resolution) = line.split_whitespace().next() {
-                        if let Some(height_str) = resolution.split('x').nth(1) {
-                            if let Ok(height) = height_str.parse::<u32>() {
+                        if let Some(height_string) = resolution.split('x').nth(1) {
+                            if let Ok(height) = height_string.parse::<u32>() {
                                 return Some(scale_for_height(height));
                             }
                         }
@@ -447,11 +447,11 @@ fn detect_screen_scale_at_position(x: i32, y: i32) -> Option<f32> {
         let monitor: HMONITOR = unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST) };
 
         if !monitor.is_null() {
-            let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
-            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            let mut monitor_information: MONITORINFO = unsafe { std::mem::zeroed() };
+            monitor_information.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
 
-            if unsafe { GetMonitorInfoW(monitor, &mut info) } != 0 {
-                let rect: RECT = info.rcMonitor;
+            if unsafe { GetMonitorInfoW(monitor, &mut monitor_information) } != 0 {
+                let rect: RECT = monitor_information.rcMonitor;
                 let height = (rect.bottom - rect.top) as u32;
 
                 if height > 0 {
@@ -515,7 +515,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             delete_sessions_on_exit: false,
-            exclude: default_exclude_patterns(),
+            exclude: exclude_patterns_default(),
             include: Vec::new(),
             output_format: OutputFormat::default(),
             show_hidden: false,
@@ -529,7 +529,7 @@ impl Default for Options {
 
 impl Options {
     pub fn load() -> SwarmResult<Self> {
-        let path = Self::config_path()?;
+        let path = Self::configuration_path()?;
 
         if !path.exists() {
             return Ok(Self::default());
@@ -539,7 +539,7 @@ impl Options {
         let mut options: Self = toml::from_str(&content)?;
 
         if options.exclude.is_empty() {
-            options.exclude = default_exclude_patterns();
+            options.exclude = exclude_patterns_default();
         }
 
         if let Some(scale) = options.ui_scale {
@@ -552,7 +552,7 @@ impl Options {
     }
 
     pub fn save(&self) -> SwarmResult<()> {
-        let path = Self::config_path()?;
+        let path = Self::configuration_path()?;
 
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -631,13 +631,13 @@ impl Options {
     }
 
     pub fn reset_excludes_to_defaults(&mut self) {
-        self.exclude = default_exclude_patterns();
+        self.exclude = exclude_patterns_default();
         let _ = self.save();
     }
 
-    fn config_path() -> SwarmResult<PathBuf> {
+    fn configuration_path() -> SwarmResult<PathBuf> {
         dirs::data_local_dir()
-            .map(|dir| dir.join(APP_NAME.to_lowercase()).join("options.toml"))
+            .map(|directory| directory.join(APP_NAME.to_lowercase()).join("options.toml"))
             .ok_or_else(|| SwarmError::Config("Unable to determine configuration path".into()))
     }
 }

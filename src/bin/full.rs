@@ -26,43 +26,43 @@ const CLI_FLAGS: &[&str] = &[
 ];
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let arguments: Vec<String> = env::args().collect();
 
-    if has_cli_flags(&args) {
+    if has_cli_flags(&arguments) {
         attach_console();
-        let cli = cli::Cli::parse();
+        let cli = cli::CommandLineInterface::parse();
         cli::run(cli);
         flush_console_prompt();
     } else {
-        let paths = parse_gui_paths(&args);
+        let paths = parse_gui_paths(&arguments);
         run_gui(paths);
     }
 }
 
-fn has_cli_flags(args: &[String]) -> bool {
-    args.iter().any(|arg| CLI_FLAGS.contains(&arg.as_str()))
+fn has_cli_flags(arguments: &[String]) -> bool {
+    arguments.iter().any(|arg| CLI_FLAGS.contains(&arg.as_str()))
 }
 
-fn parse_gui_paths(args: &[String]) -> Vec<String> {
-    if args.len() <= 1 {
+fn parse_gui_paths(arguments: &[String]) -> Vec<String> {
+    if arguments.len() <= 1 {
         return vec![];
     }
 
-    args[1..]
+    arguments[1..]
         .iter()
         .map(|arg| normalize_path(arg))
         .collect()
 }
 
-fn normalize_path(path_str: &str) -> String {
-    let path = Path::new(path_str);
+fn normalize_path(string_path: &str) -> String {
+    let path = Path::new(string_path);
 
     if path.is_file() {
         path.parent()
             .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path_str.to_string())
+            .unwrap_or_else(|| string_path.to_string())
     } else {
-        path_str.to_string()
+        string_path.to_string()
     }
 }
 
@@ -140,18 +140,18 @@ fn run_gui(paths: Vec<String>) {
 }
 
 fn create_window_options() -> eframe::NativeOptions {
-    const WINDOW_WIDTH: f32 = 1000.0;
-    const WINDOW_HEIGHT: f32 = 700.0;
-    const SCREEN_WIDTH: f32 = 1920.0;
-    const SCREEN_HEIGHT: f32 = 1080.0;
+    const WINDOW_WIDTH_PIXELS: f32 = 1000.0;
+    const WINDOW_HEIGHT_PIXELS: f32 = 700.0;
+    const SCREEN_WIDTH_PIXELS: f32 = 1920.0;
+    const SCREEN_HEIGHT_PIXELS: f32 = 1080.0;
 
-    let pos_x = (SCREEN_WIDTH - WINDOW_WIDTH) / 2.0;
-    let pos_y = (SCREEN_HEIGHT - WINDOW_HEIGHT) / 2.0;
+    let position_x = (SCREEN_WIDTH_PIXELS - WINDOW_WIDTH_PIXELS) / 2.0;
+    let position_y = (SCREEN_HEIGHT_PIXELS - WINDOW_HEIGHT_PIXELS) / 2.0;
 
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([WINDOW_WIDTH, WINDOW_HEIGHT])
-            .with_position([pos_x, pos_y])
+            .with_inner_size([WINDOW_WIDTH_PIXELS, WINDOW_HEIGHT_PIXELS])
+            .with_position([position_x, position_y])
             .with_decorations(false)
             .with_icon(load_icon()),
         ..Default::default()

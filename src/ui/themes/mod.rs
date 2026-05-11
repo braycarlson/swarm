@@ -69,7 +69,7 @@ impl Theme {
         ]
     }
 
-    pub fn apply(&self, ctx: &egui::Context) {
+    pub fn apply(&self, context: &egui::Context) {
         let visuals = match self {
             Self::CatppuccinLatte => catppuccin::catppuccin_latte_visuals(),
             Self::CatppuccinFrappe => catppuccin::catppuccin_frappe_visuals(),
@@ -86,12 +86,12 @@ impl Theme {
             Self::TokyoNightDay => tokyo_night::tokyo_night_day_visuals(),
         };
 
-        ctx.set_visuals(visuals);
+        context.set_visuals(visuals);
     }
 }
 
-pub fn apply_style(ctx: &egui::Context) {
-    let mut style = (*ctx.global_style()).clone();
+pub fn apply_style(context: &egui::Context) {
+    let mut style = (*context.global_style()).clone();
 
     style.text_styles.insert(
         egui::TextStyle::Body,
@@ -131,5 +131,5 @@ pub fn apply_style(ctx: &egui::Context) {
 
     style.spacing.indent = 0.0;
 
-    ctx.set_global_style(style);
+    context.set_global_style(style);
 }

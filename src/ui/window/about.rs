@@ -4,10 +4,10 @@ use eframe::egui;
 
 use crate::app::message::{App, Message};
 use crate::constants::{APP_NAME, APP_VERSION};
-use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rect};
+use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rectangle};
 
-pub fn render(ctx: &egui::Context, sender: &Sender<Message>) {
-    let center = ctx.content_rect().center();
+pub fn render(context: &egui::Context, sender: &Sender<Message>) {
+    let center = context.content_rect().center();
     let title_bar_height = 32.0;
     let button_width = 46.0;
 
@@ -18,10 +18,10 @@ pub fn render(ctx: &egui::Context, sender: &Sender<Message>) {
         .collapsible(false)
         .pivot(egui::Align2::CENTER_CENTER)
         .current_pos(center)
-        .show(ctx, |ui| {
+        .show(context, |ui| {
             let content_rect = ui.max_rect();
 
-            let title_rect = egui::Rect::from_min_size(
+            let title_rectangle = egui::Rect::from_min_size(
                 content_rect.min,
                 egui::vec2(content_rect.width(), title_bar_height),
             );
@@ -36,35 +36,35 @@ pub fn render(ctx: &egui::Context, sender: &Sender<Message>) {
                 }
             );
 
-            let close_rect = egui::Rect::from_min_size(
-                title_rect.right_top() - egui::vec2(button_width, 0.0),
+            let close_rectangle = egui::Rect::from_min_size(
+                title_rectangle.right_top() - egui::vec2(button_width, 0.0),
                 egui::vec2(button_width, title_bar_height),
             );
 
             let close_response = ui.interact(
-                close_rect,
+                close_rectangle,
                 ui.id().with("about_close"),
                 egui::Sense::click(),
             );
 
             if close_response.hovered() {
-                let p = ui.painter().with_clip_rect(title_rect);
-                p.rect_filled(
-                    hover_rect(close_rect, title_rect),
+                let painter = ui.painter().with_clip_rect(title_rectangle);
+                painter.rect_filled(
+                    hover_rectangle(close_rectangle, title_rectangle),
                     0.0,
                     egui::Color32::from_rgb(232, 17, 35),
                 );
             }
 
             {
-                let fg = if close_response.hovered() {
+                let foreground = if close_response.hovered() {
                     egui::Color32::WHITE
                 } else {
                     ui.visuals().text_color()
                 };
 
-                let p = ui.painter().with_clip_rect(title_rect);
-                draw_title_icon(&p, close_rect, TitleIcon::Close, fg);
+                let painter = ui.painter().with_clip_rect(title_rectangle);
+                draw_title_icon(&painter, close_rectangle, TitleIcon::Close, foreground);
             }
 
             if close_response.clicked() {

@@ -25,22 +25,22 @@ impl View {
         bottom::render(ui, model, ui_state, sender);
         central::render(ui, model, ui_state, sender);
 
-        let ctx = ui.ctx();
+        let context = ui.ctx();
 
         if ui_state.options_show {
-            options::render(ctx, model, ui_state, sender);
+            options::render(context, model, ui_state, sender);
         }
 
         if ui_state.about_show {
-            about::render(ctx, sender);
+            about::render(context, sender);
         }
 
         if ui_state.preset_save_show {
-            preset::render_save(ctx, ui_state, sender);
+            preset::render_save(context, ui_state, sender);
         }
 
         if ui_state.preset_load_show {
-            preset::render_load(ctx, model, sender);
+            preset::render_load(context, model, sender);
         }
     }
 }

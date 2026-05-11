@@ -66,7 +66,7 @@ impl BackgroundLoadTask {
         );
     }
 
-    fn count_unloaded(nodes: &[FileNode]) -> usize {
+    fn unloaded_count(nodes: &[FileNode]) -> usize {
         let mut count: usize = 0;
 
         for node in nodes {
@@ -76,7 +76,7 @@ impl BackgroundLoadTask {
                 }
 
                 if node.loaded {
-                    count += Self::count_unloaded(&node.children);
+                    count += Self::unloaded_count(&node.children);
                 }
             }
         }
@@ -94,7 +94,7 @@ impl WorkerTask for BackgroundLoadTask {
             BackgroundLoadCommand::Start(mut nodes, options) => {
                 self.is_running.store(true, Ordering::Relaxed);
 
-                let total = Self::count_unloaded(&nodes);
+                let total = Self::unloaded_count(&nodes);
                 let loaded = AtomicUsize::new(0);
 
                 Self::load_recursively(&mut nodes, &options, result_sender, &loaded, total);

@@ -33,7 +33,7 @@ pub enum Session {
     Selected(String),
     Deleted(String),
     NameEdited(String),
-    Renamed { id: String, name: String },
+    Renamed { identifier: String, name: String },
     EditStarted(String),
     EditCancelled,
 }

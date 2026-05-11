@@ -53,8 +53,8 @@ impl WorkerTask for SessionLoadTask {
             SessionLoadCommand::Load(path, _options) => {
                 self.loading.store(true, Ordering::Relaxed);
 
-                let loading_msg = format!("Loading {}", path.display());
-                let _ = result_sender.send(SessionLoadResult::Loading(loading_msg));
+                let loading_message = format!("Loading {}", path.display());
+                let _ = result_sender.send(SessionLoadResult::Loading(loading_message));
 
                 match Self::load_path(path.clone()) {
                     Ok(nodes) => {
@@ -63,8 +63,8 @@ impl WorkerTask for SessionLoadTask {
                     }
                     Err(error) => {
                         self.loading.store(false, Ordering::Relaxed);
-                        let error_msg = format!("Failed to load path {}: {}", path.display(), error);
-                        let _ = result_sender.send(SessionLoadResult::Error(error_msg));
+                        let error_message = format!("Failed to load path {}: {}", path.display(), error);
+                        let _ = result_sender.send(SessionLoadResult::Error(error_message));
                     }
                 }
             }

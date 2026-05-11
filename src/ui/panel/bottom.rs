@@ -23,7 +23,7 @@ pub fn render(
                     let row_height = ui.spacing().interact_size.y;
                     let padding = 8.0;
 
-                    let tree_is_loading = matches!(model.tree.status_load, LoadStatus::Loading { .. });
+                    let tree_is_loading = matches!(model.tree.load_status, LoadStatus::Loading { .. });
                     let can_copy = !ui_state.copy_in_progress && !tree_is_loading;
 
                     let copy_label = if ui_state.copy_in_progress {
@@ -44,10 +44,10 @@ pub fn render(
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(10.0);
 
-                        if matches!(model.tree.status_load, LoadStatus::Loading { .. }) {
+                        if matches!(model.tree.load_status, LoadStatus::Loading { .. }) {
                             ui.spinner();
 
-                            if let LoadStatus::Loading { message, .. } = &model.tree.status_load {
+                            if let LoadStatus::Loading { message, .. } = &model.tree.load_status {
                                 ui.label(
                                     egui::RichText::new(message)
                                         .color(ui.visuals().weak_text_color())
@@ -55,9 +55,9 @@ pub fn render(
                             }
                         }
 
-                        if !tree_is_loading && model.tree.count_file > 0 {
+                        if !tree_is_loading && model.tree.files_count > 0 {
                             ui.label(
-                                egui::RichText::new(format!("{} files", model.tree.count_file))
+                                egui::RichText::new(format!("{} files", model.tree.files_count))
                                     .color(ui.visuals().weak_text_color())
                             );
                         }

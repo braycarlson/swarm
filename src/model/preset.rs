@@ -9,7 +9,7 @@ use crate::model::error::SwarmResult;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Preset {
-    pub id: String,
+    pub identifier: String,
     pub name: String,
     pub created_at: u64,
     pub root: Option<PathBuf>,
@@ -30,7 +30,7 @@ impl Preset {
             .as_secs();
 
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
+            identifier: uuid::Uuid::new_v4().to_string(),
             name,
             created_at: now,
             root,
@@ -87,15 +87,15 @@ impl PresetModel {
     }
 
     pub fn add(&mut self, preset: Preset) {
-        self.presets.insert(preset.id.clone(), preset);
+        self.presets.insert(preset.identifier.clone(), preset);
     }
 
-    pub fn remove(&mut self, id: &str) -> Option<Preset> {
-        self.presets.remove(id)
+    pub fn remove(&mut self, identifier: &str) -> Option<Preset> {
+        self.presets.remove(identifier)
     }
 
-    pub fn get(&self, id: &str) -> Option<&Preset> {
-        self.presets.get(id)
+    pub fn get(&self, identifier: &str) -> Option<&Preset> {
+        self.presets.get(identifier)
     }
 
     pub fn list(&self) -> Vec<&Preset> {
@@ -115,11 +115,11 @@ impl PresetModel {
     }
 
     pub fn save_to_disk(&self) -> SwarmResult<()> {
-        if let Some(dir) = Self::presets_directory() {
-            fs::create_dir_all(&dir)?;
+        if let Some(directory) = Self::presets_directory() {
+            fs::create_dir_all(&directory)?;
 
-            for (id, preset) in &self.presets {
-                let path = dir.join(format!("{}.json", id));
+            for (identifier, preset) in &self.presets {
+                let path = directory.join(format!("{}.json", identifier));
                 let json = serde_json::to_string_pretty(preset)?;
                 fs::write(path, json)?;
             }
@@ -128,9 +128,9 @@ impl PresetModel {
         Ok(())
     }
 
-    pub fn delete_from_disk(id: &str) -> SwarmResult<()> {
-        if let Some(dir) = Self::presets_directory() {
-            let path = dir.join(format!("{}.json", id));
+    pub fn delete_from_disk(identifier: &str) -> SwarmResult<()> {
+        if let Some(directory) = Self::presets_directory() {
+            let path = directory.join(format!("{}.json", identifier));
             let _ = fs::remove_file(path);
         }
 
@@ -140,8 +140,8 @@ impl PresetModel {
     pub fn load_from_disk() -> Self {
         let mut model = Self::new();
 
-        if let Some(dir) = Self::presets_directory() {
-            if let Ok(entries) = fs::read_dir(&dir) {
+        if let Some(directory) = Self::presets_directory() {
+            if let Ok(entries) = fs::read_dir(&directory) {
                 for entry in entries.flatten() {
                     let path = entry.path();
 
@@ -158,8 +158,8 @@ impl PresetModel {
     }
 
     fn presets_directory() -> Option<PathBuf> {
-        dirs::data_local_dir().map(|dir| {
-            dir.join(APP_NAME.to_lowercase()).join("presets")
+        dirs::data_local_dir().map(|directory| {
+            directory.join(APP_NAME.to_lowercase()).join("presets")
         })
     }
 }

@@ -15,14 +15,14 @@ use super::core::{Worker, WorkerTask};
 
 pub struct FilterEntry {
     pub path: PathBuf,
-    pub path_lowercase: Arc<str>,
+    pub lowercase_path: Arc<str>,
     pub offset_name: u32,
     pub metadata: Option<FileMetadata>,
 }
 
 impl FilterEntry {
-    pub fn name_lower(&self) -> &str {
-        &self.path_lowercase[self.offset_name as usize..]
+    pub fn name_lowercase(&self) -> &str {
+        &self.lowercase_path[self.offset_name as usize..]
     }
 }
 
@@ -30,7 +30,7 @@ pub enum FilterCommand {
     Filter {
         entries: Vec<FilterEntry>,
         query: ParsedQuery,
-        git: GitService,
+        git_service: GitService,
     },
     Cancel,
 }
@@ -95,7 +95,7 @@ impl FilterTask {
         let git_status = Some(git.get_status(&entry.path));
         let metadata = Self::resolve_metadata(entry, query);
 
-        if !query.matches_full(entry.name_lower(), &entry.path_lowercase, git_status, false, metadata.as_ref()) {
+        if !query.matches_full(entry.name_lowercase(), &entry.lowercase_path, git_status, false, metadata.as_ref()) {
             return false;
         }
 
@@ -147,14 +147,14 @@ impl WorkerTask for FilterTask {
 
     fn process(&mut self, command: Self::Command, result_sender: &Sender<Self::Result>) {
         match command {
-            FilterCommand::Filter { entries, query, git } => {
+            FilterCommand::Filter { entries, query, git_service } => {
                 self.is_running.store(true, Ordering::Relaxed);
                 let _ = result_sender.send(FilterResult::Started);
 
                 let matching = Self::filter_entries(
                     &entries,
                     &query,
-                    &git,
+                    &git_service,
                     result_sender,
                     &self.is_running,
                 );
@@ -193,12 +193,12 @@ impl FilterWorker {
         Self { is_running, worker }
     }
 
-    pub fn start_filter(&self, entries: Vec<FilterEntry>, query: ParsedQuery, git: GitService) -> bool {
+    pub fn start_filter(&self, entries: Vec<FilterEntry>, query: ParsedQuery, git_service: GitService) -> bool {
         if self.is_running.load(Ordering::Relaxed) {
             let _ = self.worker.send(FilterCommand::Cancel);
         }
 
-        self.worker.send(FilterCommand::Filter { entries, query, git })
+        self.worker.send(FilterCommand::Filter { entries, query, git_service })
     }
 
     pub fn cancel(&self) {
@@ -233,7 +233,7 @@ fn collect_entries(
     nodes: &[FileNode],
     query: &ParsedQuery,
     depth: usize,
-    out: &mut Vec<FilterEntry>,
+    output: &mut Vec<FilterEntry>,
 ) {
     for node in nodes {
         if node.is_directory() {
@@ -241,11 +241,11 @@ fn collect_entries(
                 continue;
             }
 
-            collect_entries(&node.children, query, depth + 1, out);
+            collect_entries(&node.children, query, depth + 1, output);
         } else {
-            out.push(FilterEntry {
+            output.push(FilterEntry {
                 path: node.path.clone(),
-                path_lowercase: Arc::clone(&node.path_lowercase),
+                lowercase_path: Arc::clone(&node.lowercase_path),
                 offset_name: node.offset_name,
                 metadata: node.metadata.clone(),
             });

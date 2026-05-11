@@ -23,7 +23,7 @@ fn handle_copy_requested(model: &mut Model, ui: &mut UiState) -> Command {
 
     model.refresh_git_status();
 
-    let paths = model.tree.gather_checked_paths_with_git(&model.search, Some(&model.git));
+    let paths = model.tree.gather_checked_paths_with_git(&model.search, Some(&model.git_service));
 
     if paths.is_empty() {
         return Command::None;
@@ -37,7 +37,7 @@ fn handle_copy_requested(model: &mut Model, ui: &mut UiState) -> Command {
     Command::GatherFiles {
         paths,
         options: Arc::clone(&model.options),
-        git: model.git.clone(),
+        git: model.git_service.clone(),
         query,
     }
 }

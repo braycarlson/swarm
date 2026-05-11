@@ -103,24 +103,24 @@ fn render_session_tabs(
 
     let available_width = ui.available_width();
 
-    let (rect, response) = ui.allocate_exact_size(
+    let (rectangle, response) = ui.allocate_exact_size(
         egui::vec2(available_width, 28.0),
         egui::Sense::click(),
     );
 
     let mut child_ui = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect)
+            .max_rect(rectangle)
             .layout(egui::Layout::left_to_right(egui::Align::Center))
     );
 
     child_ui.spacing_mut().item_spacing.x = 2.0;
 
-    for (id, session) in sessions {
-        if Some(id.clone()) == ui_state.session_editing {
-            render_edit_tab(&mut child_ui, id, ui_state, sender);
+    for (identifier, session) in sessions {
+        if Some(identifier.clone()) == ui_state.session_editing {
+            render_edit_tab(&mut child_ui, identifier, ui_state, sender);
         } else {
-            render_tab_label(&mut child_ui, id, session, model, sender);
+            render_tab_label(&mut child_ui, identifier, session, model, sender);
         }
 
         child_ui.separator();
@@ -140,11 +140,11 @@ fn render_session_tabs(
 
 fn render_edit_tab(
     ui: &mut egui::Ui,
-    id: &str,
+    identifier: &str,
     ui_state: &UiState,
     sender: &Sender<Message>,
 ) {
-    let mut name = ui_state.name_edit.clone();
+    let mut name = ui_state.editing_session_name.clone();
 
     let response = ui.add(
         egui::TextEdit::singleline(&mut name)
@@ -163,7 +163,7 @@ fn render_edit_tab(
     if enter || clicked_away {
         if !name.trim().is_empty() {
             sender.send(Message::Session(Session::Renamed {
-                id: id.to_string(),
+                identifier: identifier.to_string(),
                 name,
             })).ok();
         } else {
@@ -174,12 +174,12 @@ fn render_edit_tab(
 
 fn render_tab_label(
     ui: &mut egui::Ui,
-    id: &str,
+    identifier: &str,
     session: &crate::app::state::SessionData,
     model: &Model,
     sender: &Sender<Message>,
 ) {
-    let selected = model.sessions.active_id.as_deref() == Some(id);
+    let selected = model.sessions.active_identifier.as_deref() == Some(identifier);
 
     let text = if selected {
         egui::RichText::new(&session.name).strong()
@@ -190,17 +190,17 @@ fn render_tab_label(
     let response = ui.selectable_label(selected, text);
 
     if response.clicked() && !selected {
-        sender.send(Message::Session(Session::Selected(id.to_string()))).ok();
+        sender.send(Message::Session(Session::Selected(identifier.to_string()))).ok();
     }
 
     response.context_menu(|ui| {
         if ui.button("Rename Session").clicked() {
-            sender.send(Message::Session(Session::EditStarted(id.to_string()))).ok();
+            sender.send(Message::Session(Session::EditStarted(identifier.to_string()))).ok();
             ui.close();
         }
 
         if ui.button("Delete Session").clicked() {
-            sender.send(Message::Session(Session::Deleted(id.to_string()))).ok();
+            sender.send(Message::Session(Session::Deleted(identifier.to_string()))).ok();
             ui.close();
         }
     });

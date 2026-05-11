@@ -20,7 +20,7 @@ use crate::services::worker::filter::{FilterResult, FilterWorker};
 use crate::services::worker::session::{SessionLoadResult, SessionLoader};
 use crate::services::worker::tree::{TreeLoadResult, TreeLoader};
 
-const MESSAGES_PER_POLL_MAX: u32 = 20;
+const POLL_MESSAGE_COUNT_MAX: u32 = 20;
 
 pub struct Runtime {
     filter_worker: FilterWorker,
@@ -52,31 +52,31 @@ impl Runtime {
     pub fn load_sessions(&self) -> SessionsModel {
         let mut sessions = SessionsModel::new();
 
-        if let Some(dir) = self.get_sessions_directory() {
-            if let Ok(entries) = std::fs::read_dir(&dir) {
+        if let Some(directory) = self.get_sessions_directory() {
+            if let Ok(entries) = std::fs::read_dir(&directory) {
                 for entry in entries.flatten() {
                     let path = entry.path();
 
                     if path.extension().and_then(|s| s.to_str()) == Some("json")
                         && let Ok(content) = std::fs::read_to_string(&path)
                             && let Ok(session) = serde_json::from_str::<SessionData>(&content) {
-                                sessions.sessions.insert(session.id.clone(), session);
+                                sessions.sessions.insert(session.identifier.clone(), session);
                             }
                 }
 
                 if !sessions.sessions.is_empty() {
-                    let saved_active_id = self.load_active_session_id(&dir);
+                    let saved_active_identifier = self.load_active_session_identifier(&directory);
 
-                    if let Some(ref id) = saved_active_id {
-                        if sessions.sessions.contains_key(id) {
-                            sessions.active_id = Some(id.clone());
+                    if let Some(ref identifier) = saved_active_identifier {
+                        if sessions.sessions.contains_key(identifier) {
+                            sessions.active_identifier = Some(identifier.clone());
                         }
                     }
 
-                    if sessions.active_id.is_none() {
-                        sessions.active_id = sessions.sessions.values()
-                            .max_by_key(|s| s.last_modified)
-                            .map(|s| s.id.clone());
+                    if sessions.active_identifier.is_none() {
+                        sessions.active_identifier = sessions.sessions.values()
+                            .max_by_key(|session| session.last_modified)
+                            .map(|session| session.identifier.clone());
                     }
                 }
             }
@@ -103,8 +103,8 @@ impl Runtime {
                 self.tree_loader.start_load(nodes, (*options).clone());
             }
 
-            Command::GatherFiles { paths, options, git, query } => {
-                self.execute_gather(paths, options, git, query);
+            Command::GatherFiles { paths, options, git: git_service, query } => {
+                self.execute_gather(paths, options, git_service, query);
             }
 
             Command::RenderTree { nodes, options } => {
@@ -118,16 +118,16 @@ impl Runtime {
             Command::SaveSessions => {
             }
 
-            Command::DeleteSessionData(id) => {
-                self.delete_session_file(&id);
+            Command::DeleteSessionData(identifier) => {
+                self.delete_session_file(&identifier);
             }
 
-            Command::PropagateCheckedWithLoad { nodes, path, checked, options, search, git } => {
-                self.execute_propagate_with_load(nodes, path, checked, options, search, git);
+            Command::PropagateCheckedWithLoad { nodes, path, checked, options, search, git: git_service } => {
+                self.execute_propagate_with_load(nodes, path, checked, options, search, git_service);
             }
 
-            Command::StartExpensiveFilter { entries, query, git } => {
-                self.filter_worker.start_filter(entries, query, git);
+            Command::StartExpensiveFilter { entries, query, git: git_service } => {
+                self.filter_worker.start_filter(entries, query, git_service);
             }
 
             Command::CancelFilter => {
@@ -160,28 +160,28 @@ impl Runtime {
     }
 
     pub fn save_sessions(&self, sessions: &SessionsModel) {
-        if let Some(dir) = self.get_sessions_directory() {
-            let _ = std::fs::create_dir_all(&dir);
+        if let Some(directory) = self.get_sessions_directory() {
+            let _ = std::fs::create_dir_all(&directory);
 
-            for (id, session) in &sessions.sessions {
-                let path = dir.join(format!("{}.json", id));
+            for (identifier, session) in &sessions.sessions {
+                let path = directory.join(format!("{}.json", identifier));
 
                 if let Ok(json) = serde_json::to_string_pretty(session) {
                     let _ = std::fs::write(path, json);
                 }
             }
 
-            if let Some(ref active_id) = sessions.active_id {
-                let active_path = dir.join("active");
-                let _ = std::fs::write(active_path, active_id);
+            if let Some(ref active_identifier) = sessions.active_identifier {
+                let active_path = directory.join("active");
+                let _ = std::fs::write(active_path, active_identifier);
             }
         }
     }
 
     pub fn save_last_session(&self, session: &SessionData) {
-        if let Some(dir) = self.get_app_directory() {
-            let _ = std::fs::create_dir_all(&dir);
-            let path = dir.join("last_session.json");
+        if let Some(directory) = self.get_app_directory() {
+            let _ = std::fs::create_dir_all(&directory);
+            let path = directory.join("last_session.json");
 
             if let Ok(json) = serde_json::to_string_pretty(session) {
                 let _ = std::fs::write(path, json);
@@ -190,25 +190,25 @@ impl Runtime {
     }
 
     fn load_last_session(&self) -> Option<SessionData> {
-        let dir = self.get_app_directory()?;
-        let path = dir.join("last_session.json");
+        let directory = self.get_app_directory()?;
+        let path = directory.join("last_session.json");
         let content = std::fs::read_to_string(path).ok()?;
         serde_json::from_str(&content).ok()
     }
 
     fn get_app_directory(&self) -> Option<PathBuf> {
-        dirs::data_local_dir().map(|dir| dir.join(APP_NAME.to_lowercase()))
+        dirs::data_local_dir().map(|directory| directory.join(APP_NAME.to_lowercase()))
     }
 
     fn get_sessions_directory(&self) -> Option<PathBuf> {
-        dirs::data_local_dir().map(|dir| {
-            dir.join(APP_NAME.to_lowercase()).join("sessions")
+        dirs::data_local_dir().map(|directory| {
+            directory.join(APP_NAME.to_lowercase()).join("sessions")
         })
     }
 
-    fn load_active_session_id(&self, sessions_dir: &PathBuf) -> Option<String> {
-        let path = sessions_dir.join("active");
-        std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+    fn load_active_session_identifier(&self, sessions_directory: &PathBuf) -> Option<String> {
+        let path = sessions_directory.join("active");
+        std::fs::read_to_string(path).ok().map(|text| text.trim().to_string())
     }
 
     fn poll_session_loader(&self) -> Vec<Message> {
@@ -218,7 +218,7 @@ impl Runtime {
         while let Some(result) = self.session_loader.check_results() {
             count += 1;
 
-            if count > MESSAGES_PER_POLL_MAX {
+            if count > POLL_MESSAGE_COUNT_MAX {
                 break;
             }
 
@@ -280,7 +280,7 @@ impl Runtime {
         messages
     }
 
-    fn execute_gather(&mut self, paths: Vec<String>, options: Arc<Options>, git: GitService, query: ParsedQuery) {
+    fn execute_gather(&mut self, paths: Vec<String>, options: Arc<Options>, git_service: GitService, query: ParsedQuery) {
         let gather = self.gather_service.clone();
         let sender = self.message_sender.clone();
 
@@ -296,17 +296,17 @@ impl Runtime {
                 return;
             }
 
-            match gather.gather_with_context(&paths, &options, Some(&git), Some(&query)) {
-                Ok((output, stats)) => {
+            match gather.gather_with_context(&paths, &options, Some(&git_service), Some(&query)) {
+                Ok((output, statistics)) => {
                     if let Ok(mut clipboard) = ClipboardContext::new() {
                         let _ = clipboard.set_contents(output.clone());
                     }
 
-                    let text = format!("{} lines / {} tokens copied", stats.count_line, stats.count_token);
+                    let text = format!("{} lines / {} tokens copied", statistics.line_count, statistics.token_count);
                     let _ = sender.send(Message::Copy(Copy::Completed(text)));
                 }
-                Err(e) => {
-                    let _ = sender.send(Message::Copy(Copy::Failed(e.to_string())));
+                Err(error) => {
+                    let _ = sender.send(Message::Copy(Copy::Failed(error.to_string())));
                 }
             }
         });
@@ -355,20 +355,20 @@ impl Runtime {
             }
 
             match generator.generate(&paths, &options) {
-                Ok((output, stats)) => {
+                Ok((output, statistics)) => {
                     if let Ok(mut clipboard) = ClipboardContext::new() {
                         let _ = clipboard.set_contents(output.clone());
                     }
 
                     let text = format!(
                         "{} files / {} lines / {} tokens skeleton copied",
-                        stats.count_file, stats.count_line, stats.count_token,
+                        statistics.files_count, statistics.line_count, statistics.token_count,
                     );
 
                     let _ = sender.send(Message::Skeleton(Skeleton::Generated(text)));
                 }
-                Err(e) => {
-                    let _ = sender.send(Message::Skeleton(Skeleton::Failed(e.to_string())));
+                Err(error) => {
+                    let _ = sender.send(Message::Skeleton(Skeleton::Failed(error.to_string())));
                 }
             }
         });
@@ -381,7 +381,7 @@ impl Runtime {
         checked: bool,
         options: Arc<Options>,
         search: SearchModel,
-        git: GitService,
+        git_service: GitService,
     ) {
         let sender = self.message_sender.clone();
 
@@ -393,14 +393,14 @@ impl Runtime {
             let mut current = &mut nodes;
             let mut target_node: Option<&mut FileNode> = None;
 
-            for (i, &index) in path.iter().enumerate() {
-                if i == path.len() - 1 {
-                    if let Some(node) = current.get_mut(index as usize) {
+            for (loop_index, &path_index) in path.iter().enumerate() {
+                if loop_index == path.len() - 1 {
+                    if let Some(node) = current.get_mut(path_index as usize) {
                         target_node = Some(node);
                     }
 
                     break;
-                } else if let Some(node) = current.get_mut(index as usize) {
+                } else if let Some(node) = current.get_mut(path_index as usize) {
                     current = &mut node.children;
                 } else {
                     break;
@@ -409,7 +409,7 @@ impl Runtime {
 
             if let Some(node) = target_node {
                 if search.has_query() {
-                    node.propagate_checked_filtered(checked, &options, &search, Some(&git));
+                    node.propagate_checked_filtered(checked, &options, &search, Some(&git_service));
                 } else {
                     node.propagate_checked_with_load(checked, &options);
                 }
@@ -419,9 +419,9 @@ impl Runtime {
         });
     }
 
-    fn delete_session_file(&self, id: &str) {
-        if let Some(dir) = self.get_sessions_directory() {
-            let path = dir.join(format!("{}.json", id));
+    fn delete_session_file(&self, identifier: &str) {
+        if let Some(directory) = self.get_sessions_directory() {
+            let path = directory.join(format!("{}.json", identifier));
 
             if path.exists() {
                 let _ = std::fs::remove_file(path);

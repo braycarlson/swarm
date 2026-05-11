@@ -18,9 +18,9 @@ pub use ui::{FilterStatus, OptionsState, OptionsTab, UiState};
 #[derive(Clone)]
 pub struct FilteredNode {
     pub depth: usize,
-    pub index_node: usize,
-    pub path_index: Vec<usize>,
-    pub path_parent: Vec<usize>,
+    pub node_index: usize,
+    pub index_path: Vec<usize>,
+    pub parent_path: Vec<usize>,
     pub visible: bool,
 }
 
@@ -28,7 +28,7 @@ pub struct FilteredNode {
 pub struct Model {
     pub background_loader: BackgroundLoader,
     pub filtered_nodes: Option<Vec<FilteredNode>>,
-    pub git: GitService,
+    pub git_service: GitService,
     pub options: Arc<Options>,
     pub original_options: Arc<Options>,
     pub presets: PresetModel,
@@ -44,7 +44,7 @@ impl Model {
         Self {
             background_loader: BackgroundLoader::new(),
             filtered_nodes: None,
-            git: GitService::new(),
+            git_service: GitService::new(),
             options: Arc::clone(&options),
             original_options: options,
             presets: PresetModel::load_from_disk(),
@@ -68,7 +68,7 @@ impl Model {
 
     pub fn refresh_git_status(&mut self) {
         if let Some(node) = self.tree.nodes.first() {
-            self.git.refresh(&node.path);
+            self.git_service.refresh(&node.path);
         }
     }
 

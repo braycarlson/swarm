@@ -76,7 +76,7 @@ impl ToastSystem {
         self.toasts.push_back(Toast::new(message.into(), ToastLevel::Error));
     }
 
-    pub fn show(&mut self, ctx: &Context) {
+    pub fn show(&mut self, context: &Context) {
         self.toasts.retain(|toast| !toast.is_expired());
 
         if self.toasts.is_empty() {
@@ -86,8 +86,8 @@ impl ToastSystem {
         let toast = self.toasts.back().unwrap();
         let opacity = toast.opacity();
 
-        let content_rect = ctx.content_rect();
-        let visuals = ctx.global_style().visuals.clone();
+        let content_rect = context.content_rect();
+        let visuals = context.global_style().visuals.clone();
 
         let stroke_color = match toast.level {
             ToastLevel::Success => visuals.selection.stroke.color,
@@ -115,7 +115,7 @@ impl ToastSystem {
                         color: egui::Color32::from_black_alpha((80.0 * opacity) as u8),
                     })
             )
-            .show(ctx, |ui| {
+            .show(context, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(&toast.message)
@@ -139,6 +139,6 @@ impl ToastSystem {
             self.toasts.pop_back();
         }
 
-        ctx.request_repaint();
+        context.request_repaint();
     }
 }

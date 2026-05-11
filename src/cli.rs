@@ -41,7 +41,7 @@ impl From<Format> for OutputFormat {
     about = "A developer tool for generating project context",
     long_about = None,
 )]
-pub struct Cli {
+pub struct CommandLineInterface {
     #[arg(help = "Directory path to process")]
     pub path: PathBuf,
 
@@ -67,7 +67,7 @@ pub struct Cli {
     pub tree: bool,
 }
 
-pub fn run(cli: Cli) {
+pub fn run(cli: CommandLineInterface) {
     let options = Options::load().unwrap_or_default();
 
     if cli.skeleton {
@@ -104,7 +104,7 @@ pub fn run(cli: Cli) {
     output_result(&output, &cli);
 }
 
-fn output_result(output: &str, cli: &Cli) {
+fn output_result(output: &str, cli: &CommandLineInterface) {
     if let Some(ref output_path) = cli.output {
         if let Err(error) = std::fs::write(output_path, output) {
             eprintln!("Error: failed to write to '{}': {}", output_path.display(), error);
@@ -128,8 +128,8 @@ fn output_result(output: &str, cli: &Cli) {
                     process::exit(1);
                 }
 
-                let count_line = memchr::memchr_iter(b'\n', output.as_bytes()).count();
-                eprintln!("Copied to clipboard ({} lines)", count_line);
+                let line_count = memchr::memchr_iter(b'\n', output.as_bytes()).count();
+                eprintln!("Copied to clipboard ({} lines)", line_count);
             }
             Err(error) => {
                 eprintln!("Error: failed to access clipboard: {}", error);
@@ -139,7 +139,7 @@ fn output_result(output: &str, cli: &Cli) {
     }
 }
 
-fn run_skeleton(path: &Path, options: &Options, cli: &Cli) -> String {
+fn run_skeleton(path: &Path, options: &Options, cli: &CommandLineInterface) -> String {
     let mut override_options = options.clone();
 
     if let Some(ref search) = cli.search {
@@ -155,7 +155,7 @@ fn run_skeleton(path: &Path, options: &Options, cli: &Cli) -> String {
 
     match generator.generate(&paths, &override_options) {
         Ok((output, stats)) => {
-            eprintln!("{} files / {} lines / {} tokens", stats.count_file, stats.count_line, stats.count_token);
+            eprintln!("{} files / {} lines / {} tokens", stats.files_count, stats.line_count, stats.token_count);
             output
         }
         Err(error) => {
@@ -177,9 +177,9 @@ fn run_tree(path: &Path, options: &Options) -> String {
     generator.generate_tree(&root.children)
 }
 
-fn run_gather(path: &Path, options: &Options, cli: &Cli) -> String {
-    let mut git = GitService::new();
-    git.refresh(path);
+fn run_gather(path: &Path, options: &Options, cli: &CommandLineInterface) -> String {
+    let mut git_service = GitService::new();
+    git_service.refresh(path);
 
     let query = build_parsed_query(cli);
 
@@ -192,9 +192,9 @@ fn run_gather(path: &Path, options: &Options, cli: &Cli) -> String {
     let gather = GatherService::new();
     let paths = vec![path.display().to_string()];
 
-    match gather.gather_with_context(&paths, &override_options, Some(&git), Some(&query)) {
+    match gather.gather_with_context(&paths, &override_options, Some(&git_service), Some(&query)) {
         Ok((output, stats)) => {
-            eprintln!("{} lines / {} tokens", stats.count_line, stats.count_token);
+            eprintln!("{} lines / {} tokens", stats.line_count, stats.token_count);
             output
         }
         Err(error) => {
@@ -204,7 +204,7 @@ fn run_gather(path: &Path, options: &Options, cli: &Cli) -> String {
     }
 }
 
-fn build_parsed_query(cli: &Cli) -> ParsedQuery {
+fn build_parsed_query(cli: &CommandLineInterface) -> ParsedQuery {
     let mut query = match cli.search {
         Some(ref s) if !s.is_empty() => ParsedQuery::parse(s),
         _ => ParsedQuery::default(),

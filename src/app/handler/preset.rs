@@ -20,8 +20,8 @@ pub fn handle(model: &mut Model, ui: &mut UiState, message: Preset_) -> Command 
         Preset_::IncludeSearchChanged(v) => { ui.preset_include_search = v; Command::None }
         Preset_::GenericChanged(v) => { ui.preset_generic = v; Command::None }
         Preset_::Saved(name) => handle_saved(model, ui, name),
-        Preset_::Loaded(id) => handle_loaded(model, ui, id),
-        Preset_::Deleted(id) => handle_deleted(model, ui, id),
+        Preset_::Loaded(identifier) => handle_loaded(model, ui, identifier),
+        Preset_::Deleted(identifier) => handle_deleted(model, ui, identifier),
     }
 }
 
@@ -67,6 +67,7 @@ fn handle_saved(model: &mut Model, ui: &mut UiState, name: String) -> Command {
 
     let paths = if include_selection {
         let states = model.tree.collect_checkbox_states();
+
         let checked: Vec<PathBuf> = states.into_iter()
             .filter(|(_, checked)| *checked)
             .map(|(path, _)| path)
@@ -106,8 +107,8 @@ fn handle_saved(model: &mut Model, ui: &mut UiState, name: String) -> Command {
     Command::None
 }
 
-fn handle_loaded(model: &mut Model, ui: &mut UiState, id: String) -> Command {
-    let preset = match model.presets.get(&id) {
+fn handle_loaded(model: &mut Model, ui: &mut UiState, identifier: String) -> Command {
+    let preset = match model.presets.get(&identifier) {
         Some(p) => p.clone(),
         None => {
             ui.toast.error("Preset not found");
@@ -123,7 +124,7 @@ fn handle_loaded(model: &mut Model, ui: &mut UiState, id: String) -> Command {
             .collect();
 
         model.tree.restore_checkbox_states(&states);
-        model.tree.update_file_count();
+        model.tree.update_files_count();
     }
 
     if let Some(ref query) = preset.query {
@@ -138,9 +139,9 @@ fn handle_loaded(model: &mut Model, ui: &mut UiState, id: String) -> Command {
     Command::None
 }
 
-fn handle_deleted(model: &mut Model, ui: &mut UiState, id: String) -> Command {
-    let _ = PresetModel::delete_from_disk(&id);
-    model.presets.remove(&id);
+fn handle_deleted(model: &mut Model, ui: &mut UiState, identifier: String) -> Command {
+    let _ = PresetModel::delete_from_disk(&identifier);
+    model.presets.remove(&identifier);
 
     if model.presets.presets.is_empty() {
         ui.preset_load_show = false;
