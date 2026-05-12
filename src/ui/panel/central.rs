@@ -237,6 +237,7 @@ fn render_bulk_select_window(
 
             if close_response.hovered() {
                 let painter = ui.painter().with_clip_rect(title_rectangle);
+
                 painter.rect_filled(
                     hover_rectangle(close_rectangle, title_rectangle),
                     0.0,
@@ -263,19 +264,24 @@ fn render_bulk_select_window(
             ui.add_space(4.0);
 
             let mut text = ui_state.bulk_select_text.clone();
-            let text_height = (ui.available_height() - 35.0).max(100.0);
+            let text_height = (ui.available_height() - 40.0).max(100.0);
 
-            let response = ui.add_sized(
-                [ui.available_width(), text_height],
-                egui::TextEdit::multiline(&mut text)
-                    .desired_rows(10)
-            );
+            egui::ScrollArea::vertical()
+                .max_height(text_height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let response = ui.add(
+                        egui::TextEdit::multiline(&mut text)
+                            .desired_rows(10)
+                            .desired_width(ui.available_width())
+                    );
 
-            if response.changed() {
-                sender.send(Message::Tree(Tree::BulkSelectTextChanged(text))).ok();
-            }
+                    if response.changed() {
+                        sender.send(Message::Tree(Tree::BulkSelectTextChanged(text))).ok();
+                    }
+                });
 
-            ui.add_space(4.0);
+            ui.add_space(18.0);
 
             let has_text = !ui_state.bulk_select_text.trim().is_empty();
 
@@ -331,6 +337,7 @@ fn render_node(
         NodeKind::File => {
             ui.horizontal(|ui| {
                 let mut checked = node.checked;
+
                 if ui.checkbox(&mut checked, "").clicked() {
                     sender.send(Message::Tree(Tree::NodeToggled {
                         path: path.clone(),
@@ -391,6 +398,7 @@ fn render_node(
         NodeKind::Directory => {
             ui.horizontal(|ui| {
                 let mut checked = node.checked;
+
                 if ui.checkbox(&mut checked, "").clicked() {
                     sender.send(Message::Tree(Tree::NodeToggled {
                         path: path.clone(),
@@ -426,6 +434,7 @@ fn render_node(
                             checked: true,
                             propagate: true,
                         })).ok();
+
                         menu_ui.close();
                     }
 
@@ -435,6 +444,7 @@ fn render_node(
                             checked: false,
                             propagate: true,
                         })).ok();
+
                         menu_ui.close();
                     }
 
