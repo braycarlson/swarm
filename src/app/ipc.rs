@@ -4,19 +4,19 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::thread;
 
-use crate::app::message::{App, Msg};
+use crate::app::message::{App, Message};
 
 pub struct IpcListener {
-    bind_addr: String,
-    max_connections: usize,
-    sender: Sender<Msg>,
+    bind_address: String,
+    connection_count_max: usize,
+    sender: Sender<Message>,
 }
 
 impl IpcListener {
-    pub fn new(sender: Sender<Msg>) -> Self {
+    pub fn new(sender: Sender<Message>) -> Self {
         Self {
-            bind_addr: "127.0.0.1:44287".to_string(),
-            max_connections: 1000,
+            bind_address: "127.0.0.1:44287".to_string(),
+            connection_count_max: 1000,
             sender,
         }
     }
@@ -30,16 +30,16 @@ impl IpcListener {
     }
 
     fn run(self) {
-        let listener = match TcpListener::bind(&self.bind_addr) {
+        let listener = match TcpListener::bind(&self.bind_address) {
             Ok(listener) => listener,
             Err(error) => {
-                eprintln!("Failed to bind IPC listener to {}: {}", self.bind_addr, error);
+                eprintln!("Failed to bind IPC listener to {}: {}", self.bind_address, error);
                 return;
             }
         };
 
         for (index, stream) in listener.incoming().enumerate() {
-            if index >= self.max_connections {
+            if index >= self.connection_count_max {
                 break;
             }
 
@@ -67,7 +67,7 @@ impl IpcListener {
             return;
         }
 
-        if self.sender.send(Msg::App(App::PathsReceivedFromIpc(paths))).is_err() {
+        if self.sender.send(Message::App(App::PathsReceivedFromIpc(paths))).is_err() {
             eprintln!("Failed to send IPC message: receiver disconnected");
         }
     }

@@ -42,7 +42,7 @@ impl TreeLoadTask {
         let mut visible: Vec<FileNode> = Vec::with_capacity(nodes.len());
         let mut not_visible: Vec<FileNode> = Vec::new();
         let mut processed_count: usize = 0;
-        let mut total_count = Self::calculate_initial_count(&nodes);
+        let mut count_total = Self::calculate_initial_count(&nodes);
 
         for node in nodes {
             let process_result = Self::process_single_node(
@@ -50,7 +50,7 @@ impl TreeLoadTask {
                 &options,
                 result_sender,
                 &mut processed_count,
-                &mut total_count,
+                &mut count_total,
             );
 
             match process_result {
@@ -81,7 +81,7 @@ impl TreeLoadTask {
         options: &Options,
         result_sender: &Sender<TreeLoadResult>,
         processed_count: &mut usize,
-        total_count: &mut usize,
+        count_total: &mut usize,
     ) -> Result<NodeOutcome, String> {
         if !node.is_directory() {
             return Ok(NodeOutcome::NotVisible(node));
@@ -106,7 +106,7 @@ impl TreeLoadTask {
         }
 
         let child_count = Self::walk_loaded_nodes(&node, result_sender, processed_count);
-        *total_count += child_count;
+        *count_total += child_count;
 
         Ok(NodeOutcome::Visible(node))
     }
@@ -123,8 +123,8 @@ impl TreeLoadTask {
             *processed_count += 1;
 
             if *processed_count % 50 == 0 {
-                let path_string = child.path.to_string_lossy().into_owned();
-                let _ = result_sender.send(TreeLoadResult::ProcessingPath(path_string));
+                let string_path = child.path.to_string_lossy().into_owned();
+                let _ = result_sender.send(TreeLoadResult::ProcessingPath(string_path));
                 let _ = result_sender.send(TreeLoadResult::CountUpdate(*processed_count, count));
             }
 

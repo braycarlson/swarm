@@ -38,8 +38,8 @@ fn load_children_with_filter(node: &mut FileNode, options: &Options, filter: &Gl
             continue;
         }
 
-        let file_type = entry.file_type()?;
-        let kind = if file_type.is_dir() {
+        let type_file = entry.file_type()?;
+        let kind = if type_file.is_dir() {
             NodeKind::Directory
         } else {
             NodeKind::File
@@ -54,8 +54,8 @@ fn load_children_with_filter(node: &mut FileNode, options: &Options, filter: &Gl
         }
     }
 
-    directories.sort_by(|a, b| a.name_lower().cmp(b.name_lower()));
-    files.sort_by(|a, b| a.name_lower().cmp(b.name_lower()));
+    directories.sort_by(|a, b| a.name_lowercase().cmp(b.name_lowercase()));
+    files.sort_by(|a, b| a.name_lowercase().cmp(b.name_lowercase()));
 
     let mut combined = Vec::with_capacity(directories.len() + files.len());
     combined.append(&mut directories);

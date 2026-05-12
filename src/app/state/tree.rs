@@ -16,7 +16,7 @@ pub struct TreeModel {
     #[serde(skip)]
     pub states: Option<FxHashMap<PathBuf, bool>>,
     #[serde(skip)]
-    pub file_count: usize,
+    pub files_count: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -44,7 +44,7 @@ impl TreeModel {
             output: String::new(),
             load_status: LoadStatus::NotStarted,
             states: None,
-            file_count: 0,
+            files_count: 0,
         }
     }
 
@@ -89,8 +89,8 @@ impl TreeModel {
         self.nodes.iter().filter_map(|n| n.filter_selected_with_git(&query, git)).collect()
     }
 
-    pub fn update_file_count(&mut self) {
-        self.file_count = self.count_files();
+    pub fn update_files_count(&mut self) {
+        self.files_count = self.count_files();
     }
 }
 

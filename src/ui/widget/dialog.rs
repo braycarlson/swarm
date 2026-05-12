@@ -46,7 +46,7 @@ impl DialogSystem {
         self.created_at = None;
     }
 
-    pub fn info(&mut self, message: &str) {
+    pub fn information(&mut self, message: &str) {
         self.message = message.to_string();
         self.title = String::from("Information");
         self.open = true;
@@ -57,7 +57,7 @@ impl DialogSystem {
         self.open
     }
 
-    pub fn show(&mut self, ctx: &Context) {
+    pub fn show(&mut self, context: &Context) {
         if self.open {
             if self.auto_close {
                 if let Some(created_at) = self.created_at {
@@ -70,7 +70,7 @@ impl DialogSystem {
                 }
             }
 
-            let content_rect = ctx.content_rect();
+            let content_rect = context.content_rect();
             let center_pos = content_rect.center();
 
             egui::Window::new(&self.title)
@@ -79,7 +79,7 @@ impl DialogSystem {
                 .collapsible(false)
                 .pivot(Align2::CENTER_CENTER)
                 .current_pos(center_pos)
-                .show(ctx, |ui| {
+                .show(context, |ui| {
                     ui.with_layout(Layout::top_down(egui::Align::Center), |ui| {
                         ui.add_space(15.0);
                         ui.label(RichText::new(&self.message).size(16.0));

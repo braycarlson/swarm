@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use crate::app::message::{Cmd, Options_};
+use crate::app::message::{Command, Options_};
 use crate::app::state::{Model, UiState};
 
-pub fn handle(model: &mut Model, ui: &mut UiState, msg: Options_) -> Cmd {
-    match msg {
+pub fn handle(model: &mut Model, ui: &mut UiState, message: Options_) -> Command {
+    match message {
         Options_::Opened => handle_options_opened(model, ui),
         Options_::Closed => handle_options_closed(model, ui),
         Options_::TabChanged(tab) => handle_options_tab_changed(ui, tab),
@@ -19,34 +19,34 @@ pub fn handle(model: &mut Model, ui: &mut UiState, msg: Options_) -> Cmd {
     }
 }
 
-fn handle_options_opened(model: &mut Model, ui: &mut UiState) -> Cmd {
-    ui.show_options = true;
+fn handle_options_opened(model: &mut Model, ui: &mut UiState) -> Command {
+    ui.options_show = true;
     model.save_original_options();
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_options_closed(model: &mut Model, ui: &mut UiState) -> Cmd {
-    ui.show_options = false;
+fn handle_options_closed(model: &mut Model, ui: &mut UiState) -> Command {
+    ui.options_show = false;
 
     if model.options_changed() {
         model.tree.states = Some(model.tree.collect_checkbox_states());
 
-        Cmd::RefreshTree {
+        Command::RefreshTree {
             nodes: model.tree.nodes.clone(),
             options: Arc::clone(&model.options),
         }
     } else {
-        Cmd::None
+        Command::None
     }
 }
 
-fn handle_options_tab_changed(ui: &mut UiState, tab: crate::app::state::OptionsTab) -> Cmd {
+fn handle_options_tab_changed(ui: &mut UiState, tab: crate::app::state::OptionsTab) -> Command {
     ui.options_tab = tab;
-    Cmd::None
+    Command::None
 }
 
-fn handle_option_theme_changed(model: &mut Model, ui: &mut UiState, theme: crate::ui::themes::Theme) -> Cmd {
+fn handle_option_theme_changed(model: &mut Model, ui: &mut UiState, theme: crate::ui::themes::Theme) -> Command {
     ui.theme = theme;
 
     let mut new_options = (*model.options).clone();
@@ -55,75 +55,75 @@ fn handle_option_theme_changed(model: &mut Model, ui: &mut UiState, theme: crate
     let _ = new_options.save();
     model.update_options(new_options);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_option_ui_scale_changed(model: &mut Model, scale: f32) -> Cmd {
+fn handle_option_ui_scale_changed(model: &mut Model, scale: f32) -> Command {
     let mut new_options = (*model.options).clone();
     new_options.ui_scale = Some(scale.clamp(0.5, 3.0));
 
     let _ = new_options.save();
     model.update_options(new_options);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_option_use_icon_changed(model: &mut Model, value: bool) -> Cmd {
+fn handle_option_use_icon_changed(model: &mut Model, value: bool) -> Command {
     let mut new_options = (*model.options).clone();
     new_options.use_icon = value;
 
     let _ = new_options.save();
     model.update_options(new_options);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_option_show_hidden_changed(model: &mut Model, value: bool) -> Cmd {
+fn handle_option_show_hidden_changed(model: &mut Model, value: bool) -> Command {
     let mut new_options = (*model.options).clone();
     new_options.show_hidden = value;
 
     let _ = new_options.save();
     model.update_options(new_options);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_option_delete_sessions_changed(model: &mut Model, value: bool) -> Cmd {
+fn handle_option_delete_sessions_changed(model: &mut Model, value: bool) -> Command {
     let mut new_options = (*model.options).clone();
     new_options.delete_sessions_on_exit = value;
 
     let _ = new_options.save();
     model.update_options(new_options);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_option_single_instance_changed(model: &mut Model, value: bool) -> Cmd {
+fn handle_option_single_instance_changed(model: &mut Model, value: bool) -> Command {
     let mut new_options = (*model.options).clone();
     new_options.single_instance = value;
 
     let _ = new_options.save();
     model.update_options(new_options);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_option_output_format_changed(model: &mut Model, format: crate::model::output::OutputFormat) -> Cmd {
+fn handle_option_output_format_changed(model: &mut Model, format: crate::model::output::OutputFormat) -> Command {
     let mut new_options = (*model.options).clone();
     new_options.output_format = format;
 
     let _ = new_options.save();
     model.update_options(new_options);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_option_ui_scale_reset(model: &mut Model) -> Cmd {
+fn handle_option_ui_scale_reset(model: &mut Model) -> Command {
     let mut new_options = (*model.options).clone();
     new_options.ui_scale = None;
 
     let _ = new_options.save();
     model.update_options(new_options);
 
-    Cmd::None
+    Command::None
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use ignore::WalkBuilder;
 use rayon::prelude::*;
 
-use crate::app::state::search::{Command, ParsedQuery};
+use crate::app::state::search::{SearchCommand, ParsedQuery};
 use crate::model::error::SwarmResult;
 use crate::model::options::Options;
 use crate::model::path::PathExtensions;
@@ -41,10 +41,10 @@ impl GatherService {
         let filter: Arc<dyn PathFilter> = Arc::new(GlobPathFilter::from_options(options)?);
         let mut files = Vec::new();
 
-        let include_diff = query.is_some_and(|q| q.has_command(Command::Diff));
+        let include_diff = query.is_some_and(|q| q.has_command(SearchCommand::Diff));
 
-        for path_str in paths {
-            let path = Path::new(path_str.trim());
+        for string_path in paths {
+            let path = Path::new(string_path.trim());
             let clean_path = path.clean_path();
 
             if !clean_path.exists() {
@@ -150,7 +150,7 @@ impl GatherService {
                     match result {
                         Ok(entry) => {
                             if !filter.should_include(entry.path()) {
-                                if entry.file_type().is_some_and(|ft| ft.is_dir()) {
+                                if entry.file_type().is_some_and(|type_file| type_file.is_dir()) {
                                     if !local.is_empty() {
                                         for path in local.drain(..) {
                                             let _ = sender.send(path);
@@ -161,7 +161,7 @@ impl GatherService {
                                 return ignore::WalkState::Continue;
                             }
 
-                            if entry.file_type().is_some_and(|ft| ft.is_file()) {
+                            if entry.file_type().is_some_and(|type_file| type_file.is_file()) {
                                 local.push(entry.into_path());
 
                                 if local.len() >= 64 {

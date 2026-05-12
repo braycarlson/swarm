@@ -65,11 +65,11 @@ where
         results
     }
 
-    pub fn execute<F>(&self, id: &str, params: T, task_function: F) -> Result<(), String>
+    pub fn execute<F>(&self, identifier: &str, parameters: T, task_function: F) -> Result<(), String>
     where
         F: FnOnce(T) -> Result<R, String> + Send + 'static,
     {
-        let command = TaskCommand::Execute(id.to_string(), params, Box::new(task_function));
+        let command = TaskCommand::Execute(identifier.to_string(), parameters, Box::new(task_function));
 
         self.task_sender
             .send(command)
@@ -79,18 +79,18 @@ where
     fn worker_thread(task_receiver: Receiver<TaskCommand<T, R>>, event_sender: Sender<TaskResult<R>>) {
         while let Ok(command) = task_receiver.recv() {
             match command {
-                TaskCommand::Execute(id, params, task_function) => {
-                    let _ = event_sender.send(TaskResult::Started(id.clone()));
+                TaskCommand::Execute(identifier, parameters, task_function) => {
+                    let _ = event_sender.send(TaskResult::Started(identifier.clone()));
 
                     let event_sender_clone = event_sender.clone();
-                    let id_clone = id.clone();
+                    let identifier_clone = identifier.clone();
 
-                    thread::spawn(move || match task_function(params) {
+                    thread::spawn(move || match task_function(parameters) {
                         Ok(result) => {
-                            let _ = event_sender_clone.send(TaskResult::Completed(id_clone, result));
+                            let _ = event_sender_clone.send(TaskResult::Completed(identifier_clone, result));
                         }
                         Err(error) => {
-                            let _ = event_sender_clone.send(TaskResult::Error(id_clone, error));
+                            let _ = event_sender_clone.send(TaskResult::Error(identifier_clone, error));
                         }
                     });
                 }

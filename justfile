@@ -31,7 +31,3 @@ test:
 
 clean:
     cargo clean
-
-loc:
-    @{{clear}}
-    @find src -name "*.rs" | sort | xargs wc -l

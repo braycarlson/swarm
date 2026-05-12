@@ -13,7 +13,7 @@ pub fn rose_pine_visuals() -> egui::Visuals {
     let foam = egui::Color32::from_rgb(156, 207, 216);
     let iris = egui::Color32::from_rgb(196, 167, 231);
     let highlight_low = egui::Color32::from_rgb(33, 32, 46);
-    let highlight_med = egui::Color32::from_rgb(64, 61, 82);
+    let highlight_medium = egui::Color32::from_rgb(64, 61, 82);
     let highlight_high = egui::Color32::from_rgb(82, 79, 103);
 
     apply_common_settings(
@@ -28,7 +28,7 @@ pub fn rose_pine_visuals() -> egui::Visuals {
         foam,
         iris,
         highlight_low,
-        highlight_med,
+        highlight_medium,
         highlight_high,
     );
 
@@ -48,7 +48,7 @@ pub fn rose_pine_moon_visuals() -> egui::Visuals {
     let foam = egui::Color32::from_rgb(156, 207, 216);
     let iris = egui::Color32::from_rgb(196, 167, 231);
     let highlight_low = egui::Color32::from_rgb(42, 40, 62);
-    let highlight_med = egui::Color32::from_rgb(68, 65, 90);
+    let highlight_medium = egui::Color32::from_rgb(68, 65, 90);
     let highlight_high = egui::Color32::from_rgb(86, 82, 110);
 
     apply_common_settings(
@@ -63,7 +63,7 @@ pub fn rose_pine_moon_visuals() -> egui::Visuals {
         foam,
         iris,
         highlight_low,
-        highlight_med,
+        highlight_medium,
         highlight_high,
     );
 
@@ -82,7 +82,7 @@ fn apply_common_settings(
     foam: egui::Color32,
     iris: egui::Color32,
     highlight_low: egui::Color32,
-    highlight_med: egui::Color32,
+    highlight_medium: egui::Color32,
     highlight_high: egui::Color32,
 ) {
     visuals.widgets.noninteractive.bg_fill = surface;
@@ -92,20 +92,20 @@ fn apply_common_settings(
 
     visuals.widgets.inactive.bg_fill = overlay;
     visuals.widgets.inactive.weak_bg_fill = surface;
-    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, highlight_med);
+    visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, highlight_medium);
     visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, subtle);
 
-    visuals.widgets.hovered.bg_fill = highlight_med;
+    visuals.widgets.hovered.bg_fill = highlight_medium;
     visuals.widgets.hovered.weak_bg_fill = overlay;
     visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, iris);
     visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.5, text);
 
     visuals.widgets.active.bg_fill = highlight_high;
-    visuals.widgets.active.weak_bg_fill = highlight_med;
+    visuals.widgets.active.weak_bg_fill = highlight_medium;
     visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, highlight_high);
     visuals.widgets.active.fg_stroke = egui::Stroke::new(2.0, text);
 
-    visuals.widgets.open.bg_fill = highlight_med;
+    visuals.widgets.open.bg_fill = highlight_medium;
     visuals.widgets.open.weak_bg_fill = overlay;
     visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, foam);
     visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, text);

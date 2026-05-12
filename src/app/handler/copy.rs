@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use crate::app::message::{Cmd, Copy};
+use crate::app::message::{Command, Copy};
 use crate::app::state::{Model, UiState};
 
-pub fn handle(model: &mut Model, ui: &mut UiState, msg: Copy) -> Cmd {
-    match msg {
+pub fn handle(model: &mut Model, ui: &mut UiState, message: Copy) -> Command {
+    match message {
         Copy::Requested => handle_copy_requested(model, ui),
         Copy::Started => handle_copy_started(ui),
         Copy::Completed(output) => handle_copy_completed(model, ui, output),
@@ -12,9 +12,9 @@ pub fn handle(model: &mut Model, ui: &mut UiState, msg: Copy) -> Cmd {
     }
 }
 
-fn handle_copy_requested(model: &mut Model, ui: &mut UiState) -> Cmd {
+fn handle_copy_requested(model: &mut Model, ui: &mut UiState) -> Command {
     if ui.copy_in_progress {
-        return Cmd::None;
+        return Command::None;
     }
 
     for node in &mut model.tree.nodes {
@@ -23,10 +23,10 @@ fn handle_copy_requested(model: &mut Model, ui: &mut UiState) -> Cmd {
 
     model.refresh_git_status();
 
-    let paths = model.tree.gather_checked_paths_with_git(&model.search, Some(&model.git));
+    let paths = model.tree.gather_checked_paths_with_git(&model.search, Some(&model.git_service));
 
     if paths.is_empty() {
-        return Cmd::None;
+        return Command::None;
     }
 
     ui.copy_in_progress = true;
@@ -34,33 +34,33 @@ fn handle_copy_requested(model: &mut Model, ui: &mut UiState) -> Cmd {
 
     let query = model.search.parsed().into_owned();
 
-    Cmd::GatherFiles {
+    Command::GatherFiles {
         paths,
         options: Arc::clone(&model.options),
-        git: model.git.clone(),
+        git: model.git_service.clone(),
         query,
     }
 }
 
-fn handle_copy_started(ui: &mut UiState) -> Cmd {
+fn handle_copy_started(ui: &mut UiState) -> Command {
     ui.copy_in_progress = true;
-    Cmd::None
+    Command::None
 }
 
-fn handle_copy_completed(model: &mut Model, ui: &mut UiState, message: String) -> Cmd {
+fn handle_copy_completed(model: &mut Model, ui: &mut UiState, message: String) -> Command {
     model.tree.output = String::new();
     ui.copy_in_progress = false;
 
     ui.toast.success(message);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_copy_failed(ui: &mut UiState, error: String) -> Cmd {
+fn handle_copy_failed(ui: &mut UiState, error: String) -> Command {
     ui.copy_in_progress = false;
     eprintln!("Copy failed: {}", error);
 
     ui.toast.error(format!("Copy failed: {}", error));
 
-    Cmd::None
+    Command::None
 }

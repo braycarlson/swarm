@@ -2,71 +2,72 @@ use std::path::PathBuf;
 
 use rustc_hash::FxHashMap;
 
-use crate::app::message::{Cmd, Preset_};
+use crate::app::message::{Command, Preset_};
 use crate::app::state::{Model, UiState};
 use crate::model::node::FileNode;
 use crate::model::preset::{Preset, PresetModel};
 
 use super::sync_to_active_session;
 
-pub fn handle(model: &mut Model, ui: &mut UiState, msg: Preset_) -> Cmd {
-    match msg {
+pub fn handle(model: &mut Model, ui: &mut UiState, message: Preset_) -> Command {
+    match message {
         Preset_::SaveDialogOpened => handle_save_dialog_opened(model, ui),
         Preset_::SaveDialogClosed => handle_save_dialog_closed(ui),
         Preset_::LoadDialogOpened => handle_load_dialog_opened(ui),
         Preset_::LoadDialogClosed => handle_load_dialog_closed(ui),
         Preset_::NameChanged(name) => handle_name_changed(ui, name),
-        Preset_::IncludeSelectionChanged(v) => { ui.preset_include_selection = v; Cmd::None }
-        Preset_::IncludeSearchChanged(v) => { ui.preset_include_search = v; Cmd::None }
-        Preset_::GenericChanged(v) => { ui.preset_generic = v; Cmd::None }
+        Preset_::IncludeSelectionChanged(v) => { ui.preset_include_selection = v; Command::None }
+        Preset_::IncludeSearchChanged(v) => { ui.preset_include_search = v; Command::None }
+        Preset_::GenericChanged(v) => { ui.preset_generic = v; Command::None }
         Preset_::Saved(name) => handle_saved(model, ui, name),
-        Preset_::Loaded(id) => handle_loaded(model, ui, id),
-        Preset_::Deleted(id) => handle_deleted(model, ui, id),
+        Preset_::Loaded(identifier) => handle_loaded(model, ui, identifier),
+        Preset_::Deleted(identifier) => handle_deleted(model, ui, identifier),
     }
 }
 
-fn handle_save_dialog_opened(model: &Model, ui: &mut UiState) -> Cmd {
-    ui.show_save_preset = true;
+fn handle_save_dialog_opened(model: &Model, ui: &mut UiState) -> Command {
+    ui.preset_save_show = true;
     ui.preset_name.clear();
     ui.preset_include_selection = true;
     ui.preset_include_search = model.search.has_query();
     ui.preset_generic = false;
-    Cmd::None
+    Command::None
 }
 
-fn handle_save_dialog_closed(ui: &mut UiState) -> Cmd {
-    ui.show_save_preset = false;
+fn handle_save_dialog_closed(ui: &mut UiState) -> Command {
+    ui.preset_save_show = false;
     ui.preset_name.clear();
-    Cmd::None
+    Command::None
 }
 
-fn handle_load_dialog_opened(ui: &mut UiState) -> Cmd {
-    ui.show_load_preset = true;
-    Cmd::None
+fn handle_load_dialog_opened(ui: &mut UiState) -> Command {
+    ui.preset_load_show = true;
+    Command::None
 }
 
-fn handle_load_dialog_closed(ui: &mut UiState) -> Cmd {
-    ui.show_load_preset = false;
-    Cmd::None
+fn handle_load_dialog_closed(ui: &mut UiState) -> Command {
+    ui.preset_load_show = false;
+    Command::None
 }
 
-fn handle_name_changed(ui: &mut UiState, name: String) -> Cmd {
+fn handle_name_changed(ui: &mut UiState, name: String) -> Command {
     ui.preset_name = name;
-    Cmd::None
+    Command::None
 }
 
-fn handle_saved(model: &mut Model, ui: &mut UiState, name: String) -> Cmd {
+fn handle_saved(model: &mut Model, ui: &mut UiState, name: String) -> Command {
     let include_selection = ui.preset_include_selection;
     let include_search = ui.preset_include_search;
     let generic = ui.preset_generic;
 
     if !include_selection && !include_search {
         ui.toast.error("Select at least one option to save");
-        return Cmd::None;
+        return Command::None;
     }
 
     let paths = if include_selection {
         let states = model.tree.collect_checkbox_states();
+
         let checked: Vec<PathBuf> = states.into_iter()
             .filter(|(_, checked)| *checked)
             .map(|(path, _)| path)
@@ -74,7 +75,7 @@ fn handle_saved(model: &mut Model, ui: &mut UiState, name: String) -> Cmd {
 
         if checked.is_empty() {
             ui.toast.error("No files selected to save");
-            return Cmd::None;
+            return Command::None;
         }
 
         Some(checked)
@@ -99,19 +100,19 @@ fn handle_saved(model: &mut Model, ui: &mut UiState, name: String) -> Cmd {
 
     let _ = model.presets.save_to_disk();
 
-    ui.show_save_preset = false;
+    ui.preset_save_show = false;
     ui.preset_name.clear();
     ui.toast.success("Preset saved");
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_loaded(model: &mut Model, ui: &mut UiState, id: String) -> Cmd {
-    let preset = match model.presets.get(&id) {
+fn handle_loaded(model: &mut Model, ui: &mut UiState, identifier: String) -> Command {
+    let preset = match model.presets.get(&identifier) {
         Some(p) => p.clone(),
         None => {
             ui.toast.error("Preset not found");
-            return Cmd::None;
+            return Command::None;
         }
     };
 
@@ -123,7 +124,7 @@ fn handle_loaded(model: &mut Model, ui: &mut UiState, id: String) -> Cmd {
             .collect();
 
         model.tree.restore_checkbox_states(&states);
-        model.tree.update_file_count();
+        model.tree.update_files_count();
     }
 
     if let Some(ref query) = preset.query {
@@ -132,21 +133,21 @@ fn handle_loaded(model: &mut Model, ui: &mut UiState, id: String) -> Cmd {
 
     sync_to_active_session(model);
 
-    ui.show_load_preset = false;
+    ui.preset_load_show = false;
     ui.toast.success("Preset loaded");
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_deleted(model: &mut Model, ui: &mut UiState, id: String) -> Cmd {
-    let _ = PresetModel::delete_from_disk(&id);
-    model.presets.remove(&id);
+fn handle_deleted(model: &mut Model, ui: &mut UiState, identifier: String) -> Command {
+    let _ = PresetModel::delete_from_disk(&identifier);
+    model.presets.remove(&identifier);
 
     if model.presets.presets.is_empty() {
-        ui.show_load_preset = false;
+        ui.preset_load_show = false;
     }
 
-    Cmd::None
+    Command::None
 }
 
 fn uncheck_all(nodes: &mut [FileNode]) {

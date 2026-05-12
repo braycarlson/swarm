@@ -14,7 +14,7 @@ use crate::model::node::FileNode;
 use crate::model::options::Options;
 use crate::services::tree::traversal::Traversable;
 
-const MAX_PATH_DEPTH: u32 = 100;
+const PATH_DEPTH_MAX: u32 = 100;
 
 pub fn sync_to_active_session(model: &mut Model) {
     model.sessions.sync_from_tree_and_search(&model.tree, &model.search);
@@ -26,17 +26,17 @@ pub fn load_node_children(nodes: &mut [FileNode], path: &[u32], options: &Option
     }
 
     let mut current = nodes;
-    let path_len = path.len() as u32;
+    let path_length = path.len() as u32;
 
     let mut depth: u32 = 0;
 
-    while depth < path_len {
-        if depth >= MAX_PATH_DEPTH {
+    while depth < path_length {
+        if depth >= PATH_DEPTH_MAX {
             break;
         }
 
         let index_value = path[depth as usize];
-        let is_last = (depth + 1) == path_len;
+        let is_last = (depth + 1) == path_length;
 
         if is_last {
             let node_option = current.get_mut(index_value as usize);
@@ -75,17 +75,17 @@ pub fn toggle_node(nodes: &mut [FileNode], path: &[u32], checked: bool, propagat
     }
 
     let mut current = &mut *nodes;
-    let path_len = path.len() as u32;
+    let path_length = path.len() as u32;
 
     let mut depth: u32 = 0;
 
-    while depth < path_len {
-        if depth >= MAX_PATH_DEPTH {
+    while depth < path_length {
+        if depth >= PATH_DEPTH_MAX {
             break;
         }
 
         let index_value = path[depth as usize];
-        let is_last = (depth + 1) == path_len;
+        let is_last = (depth + 1) == path_length;
 
         if is_last {
             let node_option = current.get_mut(index_value as usize);
@@ -171,6 +171,7 @@ fn has_selected_child(nodes: &[FileNode], path: &[u32]) -> bool {
             if i == last {
                 return node.children.iter().any(|c| c.checked || has_any_selected(&c.children));
             }
+
             current = &node.children;
         } else {
             return false;
@@ -181,5 +182,5 @@ fn has_selected_child(nodes: &[FileNode], path: &[u32]) -> bool {
 }
 
 fn has_any_selected(nodes: &[FileNode]) -> bool {
-    nodes.iter().any(|n| n.checked || has_any_selected(&n.children))
+    nodes.iter().any(|node| node.checked || has_any_selected(&node.children))
 }

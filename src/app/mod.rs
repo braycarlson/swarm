@@ -15,7 +15,7 @@ use crate::ui::view::View;
 
 use dispatcher::Dispatcher;
 use ipc::IpcListener;
-use message::{App, CmdBuilder, Msg, Search, Tree};
+use message::{App, CommandBuilder, Message, Search, Tree};
 use runtime::Runtime;
 use state::{FilterStatus, Model, UiState};
 
@@ -23,8 +23,8 @@ pub struct SwarmApp {
     model: Model,
     ui: UiState,
     runtime: Runtime,
-    msg_receiver: mpsc::Receiver<Msg>,
-    msg_sender: mpsc::Sender<Msg>,
+    message_receiver: mpsc::Receiver<Message>,
+    message_sender: mpsc::Sender<Message>,
     initialized: bool,
     _instance_guard: Option<SingleInstance>,
     _ipc_thread: Option<std::thread::JoinHandle<()>>,
@@ -32,40 +32,40 @@ pub struct SwarmApp {
 
 impl SwarmApp {
     pub fn new(paths: Vec<String>, instance_guard: Option<SingleInstance>) -> Self {
-        let (msg_sender, msg_receiver) = mpsc::channel();
+        let (message_sender, message_receiver) = mpsc::channel();
 
         let model = Model::new(paths);
         let theme = model.options.theme;
         let ui = UiState::new(theme);
-        let runtime = Runtime::new(msg_sender.clone());
+        let runtime = Runtime::new(message_sender.clone());
 
         let ipc_thread = if instance_guard.is_some() {
-            IpcListener::new(msg_sender.clone()).spawn()
+            IpcListener::new(message_sender.clone()).spawn()
         } else {
             None
         };
 
         Self {
             model,
-            ui,
+            ui: ui,
             runtime,
-            msg_receiver,
-            msg_sender,
+            message_receiver,
+            message_sender,
             initialized: false,
             _instance_guard: instance_guard,
             _ipc_thread: ipc_thread,
         }
     }
 
-    pub fn dispatch(&self, msg: Msg) {
-        let _ = self.msg_sender.send(msg);
+    pub fn dispatch(&self, message: Message) {
+        let _ = self.message_sender.send(message);
     }
 
     fn process_messages(&mut self) {
         let mut messages = Vec::new();
 
-        while let Ok(msg) = self.msg_receiver.try_recv() {
-            messages.push(msg);
+        while let Ok(message) = self.message_receiver.try_recv() {
+            messages.push(message);
         }
 
         messages.extend(self.runtime.poll());
@@ -73,32 +73,32 @@ impl SwarmApp {
         if let Some(result) = self.model.background_loader.check_results() {
             match result {
                 BackgroundLoadResult::Progress(loaded, total) => {
-                    messages.push(Msg::Tree(Tree::BackgroundLoadProgress { loaded, total }));
+                    messages.push(Message::Tree(Tree::BackgroundLoadProgress { loaded, total }));
                 }
                 BackgroundLoadResult::NodesUpdated(nodes) => {
-                    messages.push(Msg::Tree(Tree::BackgroundLoadCompleted(nodes)));
+                    messages.push(Message::Tree(Tree::BackgroundLoadCompleted(nodes)));
                 }
             }
         }
 
         if self.ui.search_debounce.is_some() {
-            messages.push(Msg::Search(Search::DebounceTick));
+            messages.push(Message::Search(Search::DebounceTick));
         }
 
-        for msg in messages {
-            let cmd = Dispatcher::dispatch(&mut self.model, &mut self.ui, msg);
-            self.runtime.execute(cmd);
+        for message in messages {
+            let command = Dispatcher::dispatch(&mut self.model, &mut self.ui, message);
+            self.runtime.execute(command);
         }
     }
 }
 
 impl eframe::App for SwarmApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = ui.ctx().clone();
+        let context = ui.ctx().clone();
 
         crate::ui::widget::titlebar::titlebar::TitleBar::render(ui);
 
-        self.ui.theme.apply(&ctx);
+        self.ui.theme.apply(&context);
 
         let scale = if self.model.options.ui_scale.is_none() {
             ui.input(|i| {
@@ -111,7 +111,7 @@ impl eframe::App for SwarmApp {
             self.model.options.effective_ui_scale()
         };
 
-        ctx.set_pixels_per_point(scale);
+        context.set_pixels_per_point(scale);
 
         if !self.initialized {
             self.initialized = true;
@@ -122,10 +122,10 @@ impl eframe::App for SwarmApp {
 
             if has_initial_paths {
                 let session = SessionData::new("Session".to_string());
-                let session_id = session.id.clone();
+                let session_identifier = session.identifier.clone();
 
-                self.model.sessions.sessions.insert(session_id.clone(), session);
-                self.model.sessions.active_id = Some(session_id.clone());
+                self.model.sessions.sessions.insert(session_identifier.clone(), session);
+                self.model.sessions.active_identifier = Some(session_identifier.clone());
 
                 self.model.refresh_git_status();
 
@@ -134,35 +134,35 @@ impl eframe::App for SwarmApp {
                     (*self.model.options).clone()
                 );
 
-                let builder = CmdBuilder::new();
-                let cmd = builder.build();
+                let builder = CommandBuilder::new();
+                let command = builder.build();
 
-                self.runtime.execute(cmd);
-            } else if self.model.sessions.active_id.is_some() {
+                self.runtime.execute(command);
+            } else if self.model.sessions.active_identifier.is_some() {
                 self.model.refresh_git_status();
-                self.dispatch(Msg::App(App::Initialized));
+                self.dispatch(Message::App(App::Initialized));
             } else {
-                self.dispatch(Msg::App(App::Initialized));
+                self.dispatch(Message::App(App::Initialized));
             }
         }
 
-        self.ui.toast.show(&ctx);
+        self.ui.toast.show(&context);
 
         self.process_messages();
 
-        View::render(ui, &self.model, &self.ui, &self.msg_sender);
+        View::render(ui, &self.model, &self.ui, &self.message_sender);
 
         if matches!(
             self.model.tree.load_status,
             state::LoadStatus::Loading { .. }
         ) || self.ui.copy_in_progress
-          || self.ui.tree_gen_in_progress
-          || self.ui.skeleton_gen_in_progress
-          || self.model.background_loader.is_running()
-          || self.ui.search_debounce.is_some()
-          || self.ui.filter_status == FilterStatus::Filtering
+           || self.ui.tree_generate_in_progress
+           || self.ui.skeleton_generate_in_progress
+           || self.model.background_loader.is_running()
+           || self.ui.search_debounce.is_some()
+           || self.ui.filter_status == FilterStatus::Filtering
         {
-            ctx.request_repaint();
+            context.request_repaint();
         }
     }
 
@@ -178,13 +178,13 @@ impl eframe::App for SwarmApp {
         }
 
         if self.model.options.delete_sessions_on_exit {
-            if let Some(dir) = dirs::data_local_dir() {
-                let sessions_dir = dir
+            if let Some(directory) = dirs::data_local_dir() {
+                let sessions_directory = directory
                     .join(crate::constants::APP_NAME.to_lowercase())
                     .join("sessions");
 
-                if sessions_dir.exists() {
-                    let _ = std::fs::remove_dir_all(sessions_dir);
+                if sessions_directory.exists() {
+                    let _ = std::fs::remove_dir_all(sessions_directory);
                 }
             }
         } else {

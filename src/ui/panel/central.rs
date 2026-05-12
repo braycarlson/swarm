@@ -6,18 +6,18 @@ use std::os::windows::process::CommandExt;
 
 use eframe::egui;
 
-use crate::app::message::{Msg, Search, Tree};
+use crate::app::message::{Message, Search, Tree};
 use crate::app::state::{FilterStatus, Model, UiState};
 use crate::model::node::{FileNode, NodeKind};
 use crate::services::filesystem::git::GitService;
 use crate::services::tree::traversal::should_show_node_at_depth;
-use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rect};
+use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rectangle};
 
 pub fn render(
     ui: &mut egui::Ui,
     model: &Model,
     ui_state: &UiState,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
 ) {
     egui::CentralPanel::default()
         .frame(
@@ -56,7 +56,7 @@ pub fn render(
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
-                            render_tree_nodes(ui, &model.tree.nodes, model, &model.git, sender);
+                            render_tree_nodes(ui, &model.tree.nodes, model, &model.git_service, sender);
 
                             let remaining = ui.available_size();
 
@@ -75,7 +75,7 @@ pub fn render(
             });
         });
 
-    if ui_state.show_bulk_select {
+    if ui_state.bulk_select_show {
         render_bulk_select_window(ui, ui_state, sender);
     }
 }
@@ -84,7 +84,7 @@ fn render_search_bar(
     ui: &mut egui::Ui,
     model: &Model,
     ui_state: &UiState,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
 ) {
     let row_height = ui.spacing().interact_size.y;
     let bar_height = row_height + 12.0;
@@ -123,7 +123,7 @@ fn render_search_bar(
                             );
 
                             if response.changed() {
-                                let _ = sender.send(Msg::Search(Search::QueryChanged(query)));
+                                let _ = sender.send(Message::Search(Search::QueryChanged(query)));
                             }
 
                             let current_query = ui_state.search_pending.as_ref()
@@ -166,7 +166,7 @@ fn render_search_bar(
                                 );
 
                                 if clear.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                    let _ = sender.send(Msg::Search(Search::Cleared));
+                                    let _ = sender.send(Message::Search(Search::Cleared));
                                 }
                             }
                         }
@@ -178,14 +178,14 @@ fn render_search_bar(
             egui::Button::new("Filter")
                 .min_size(egui::vec2(filter_width, bar_height))
         ).on_hover_text("Select files from a list").clicked() {
-            let _ = sender.send(Msg::Tree(Tree::BulkSelectToggled));
+            let _ = sender.send(Message::Tree(Tree::BulkSelectToggled));
         }
 
         if ui.add(
             egui::Button::new("Reload")
                 .min_size(egui::vec2(reload_width, bar_height))
         ).clicked() {
-            let _ = sender.send(Msg::Tree(Tree::RefreshRequested));
+            let _ = sender.send(Message::Tree(Tree::RefreshRequested));
         }
     });
 }
@@ -193,7 +193,7 @@ fn render_search_bar(
 fn render_bulk_select_window(
     ui: &mut egui::Ui,
     ui_state: &UiState,
-    sender: &Sender<Msg>,
+    sender: &Sender<Message>,
 ) {
     let center = ui.ctx().content_rect().center();
     let title_bar_height = 32.0;
@@ -209,7 +209,7 @@ fn render_bulk_select_window(
         .show(ui.ctx(), |ui| {
             let content_rect = ui.max_rect();
 
-            let title_rect = egui::Rect::from_min_size(
+            let title_rectangle = egui::Rect::from_min_size(
                 content_rect.min,
                 egui::vec2(content_rect.width(), title_bar_height),
             );
@@ -224,75 +224,81 @@ fn render_bulk_select_window(
                 }
             );
 
-            let close_rect = egui::Rect::from_min_size(
-                title_rect.right_top() - egui::vec2(button_width, 0.0),
+            let close_rectangle = egui::Rect::from_min_size(
+                title_rectangle.right_top() - egui::vec2(button_width, 0.0),
                 egui::vec2(button_width, title_bar_height),
             );
 
             let close_response = ui.interact(
-                close_rect,
+                close_rectangle,
                 ui.id().with("bulk_close"),
                 egui::Sense::click(),
             );
 
             if close_response.hovered() {
-                let p = ui.painter().with_clip_rect(title_rect);
-                p.rect_filled(
-                    hover_rect(close_rect, title_rect),
+                let painter = ui.painter().with_clip_rect(title_rectangle);
+
+                painter.rect_filled(
+                    hover_rectangle(close_rectangle, title_rectangle),
                     0.0,
                     egui::Color32::from_rgb(232, 17, 35),
                 );
             }
 
             {
-                let fg = if close_response.hovered() {
+                let foreground = if close_response.hovered() {
                     egui::Color32::WHITE
                 } else {
                     ui.visuals().text_color()
                 };
 
-                let p = ui.painter().with_clip_rect(title_rect);
-                draw_title_icon(&p, close_rect, TitleIcon::Close, fg);
+                let painter = ui.painter().with_clip_rect(title_rectangle);
+                draw_title_icon(&painter, close_rectangle, TitleIcon::Close, foreground);
             }
 
             if close_response.clicked() {
-                sender.send(Msg::Tree(Tree::BulkSelectToggled)).ok();
+                sender.send(Message::Tree(Tree::BulkSelectToggled)).ok();
             }
 
             ui.separator();
             ui.add_space(4.0);
 
             let mut text = ui_state.bulk_select_text.clone();
-            let text_height = (ui.available_height() - 35.0).max(100.0);
+            let text_height = (ui.available_height() - 40.0).max(100.0);
 
-            let response = ui.add_sized(
-                [ui.available_width(), text_height],
-                egui::TextEdit::multiline(&mut text)
-                    .desired_rows(10)
-            );
+            egui::ScrollArea::vertical()
+                .max_height(text_height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let response = ui.add(
+                        egui::TextEdit::multiline(&mut text)
+                            .desired_rows(10)
+                            .desired_width(ui.available_width())
+                    );
 
-            if response.changed() {
-                sender.send(Msg::Tree(Tree::BulkSelectTextChanged(text))).ok();
-            }
+                    if response.changed() {
+                        sender.send(Message::Tree(Tree::BulkSelectTextChanged(text))).ok();
+                    }
+                });
 
-            ui.add_space(4.0);
+            ui.add_space(18.0);
 
             let has_text = !ui_state.bulk_select_text.trim().is_empty();
 
             if ui.add_enabled(has_text, egui::Button::new("Select")).clicked() {
-                sender.send(Msg::Tree(Tree::BulkSelectApplied)).ok();
+                sender.send(Message::Tree(Tree::BulkSelectApplied)).ok();
             }
         });
 }
 
-fn show_tree_context_menu(ui: &mut egui::Ui, sender: &Sender<Msg>) {
+fn show_tree_context_menu(ui: &mut egui::Ui, sender: &Sender<Message>) {
     if ui.button("Select All").clicked() {
-        sender.send(Msg::Tree(Tree::SelectAll)).ok();
+        sender.send(Message::Tree(Tree::SelectAll)).ok();
         ui.close();
     }
 
     if ui.button("Deselect All").clicked() {
-        sender.send(Msg::Tree(Tree::DeselectAll)).ok();
+        sender.send(Message::Tree(Tree::DeselectAll)).ok();
         ui.close();
     }
 }
@@ -301,13 +307,13 @@ fn render_tree_nodes(
     ui: &mut egui::Ui,
     nodes: &[FileNode],
     model: &Model,
-    git: &GitService,
-    sender: &Sender<Msg>,
+    git_service: &GitService,
+    sender: &Sender<Message>,
 ) {
     let query = model.search.parsed();
 
     for (i, node) in nodes.iter().enumerate() {
-        render_node(ui, node, vec![i], 0, model, git, sender, &query);
+        render_node(ui, node, vec![i], 0, model, git_service, sender, &query);
     }
 }
 
@@ -317,11 +323,11 @@ fn render_node(
     path: Vec<usize>,
     depth: usize,
     model: &Model,
-    git: &GitService,
-    sender: &Sender<Msg>,
+    git_service: &GitService,
+    sender: &Sender<Message>,
     query: &crate::app::state::search::ParsedQuery,
 ) {
-    if !should_show_node_at_depth(node, &model.search, Some(git), depth, query) {
+    if !should_show_node_at_depth(node, &model.search, Some(git_service), depth, query) {
         return;
     }
 
@@ -331,8 +337,9 @@ fn render_node(
         NodeKind::File => {
             ui.horizontal(|ui| {
                 let mut checked = node.checked;
+
                 if ui.checkbox(&mut checked, "").clicked() {
-                    sender.send(Msg::Tree(Tree::NodeToggled {
+                    sender.send(Message::Tree(Tree::NodeToggled {
                         path: path.clone(),
                         checked,
                         propagate: false,
@@ -342,7 +349,7 @@ fn render_node(
                 let response = ui.selectable_label(node.checked, &label);
 
                 if response.clicked() {
-                    sender.send(Msg::Tree(Tree::NodeToggled {
+                    sender.send(Message::Tree(Tree::NodeToggled {
                         path: path.clone(),
                         checked: !node.checked,
                         propagate: false,
@@ -365,7 +372,7 @@ fn render_node(
                     let toggle_label = if node.checked { "Deselect" } else { "Select" };
 
                     if ui.button(toggle_label).clicked() {
-                        sender.send(Msg::Tree(Tree::NodeToggled {
+                        sender.send(Message::Tree(Tree::NodeToggled {
                             path,
                             checked: !node.checked,
                             propagate: false,
@@ -391,63 +398,66 @@ fn render_node(
         NodeKind::Directory => {
             ui.horizontal(|ui| {
                 let mut checked = node.checked;
+
                 if ui.checkbox(&mut checked, "").clicked() {
-                    sender.send(Msg::Tree(Tree::NodeToggled {
+                    sender.send(Message::Tree(Tree::NodeToggled {
                         path: path.clone(),
                         checked,
                         propagate: true,
                     })).ok();
                 }
 
-                let default_open = depth == 0;
+                let open_default = depth == 0;
 
                 let header = egui::CollapsingHeader::new(&label)
                     .id_salt(&node.path)
-                    .default_open(default_open);
+                    .default_open(open_default);
 
-                let cr = header.show(ui, |ui| {
+                let collapsing_response = header.show(ui, |inner_ui| {
                     if !node.loaded {
-                        sender.send(Msg::Tree(Tree::NodeExpanded { path: path.clone() })).ok();
-                        ui.spinner();
-                        ui.label("Loading...");
+                        sender.send(Message::Tree(Tree::NodeExpanded { path: path.clone() })).ok();
+                        inner_ui.spinner();
+                        inner_ui.label("Loading...");
                     } else {
                         for (i, child) in node.children.iter().enumerate() {
                             let mut child_path = path.clone();
                             child_path.push(i);
-                            render_node(ui, child, child_path, depth + 1, model, git, sender, query);
+                            render_node(inner_ui, child, child_path, depth + 1, model, git_service, sender, query);
                         }
                     }
                 });
 
-                cr.header_response.context_menu(|ui| {
-                    if ui.button("Select All").clicked() {
-                        sender.send(Msg::Tree(Tree::NodeToggled {
+                collapsing_response.header_response.context_menu(|menu_ui| {
+                    if menu_ui.button("Select All").clicked() {
+                        sender.send(Message::Tree(Tree::NodeToggled {
                             path: path.clone(),
                             checked: true,
                             propagate: true,
                         })).ok();
-                        ui.close();
+
+                        menu_ui.close();
                     }
 
-                    if ui.button("Deselect All").clicked() {
-                        sender.send(Msg::Tree(Tree::NodeToggled {
+                    if menu_ui.button("Deselect All").clicked() {
+                        sender.send(Message::Tree(Tree::NodeToggled {
                             path: path.clone(),
                             checked: false,
                             propagate: true,
                         })).ok();
-                        ui.close();
+
+                        menu_ui.close();
                     }
 
-                    ui.separator();
+                    menu_ui.separator();
 
-                    if ui.button("Open Folder").clicked() {
+                    if menu_ui.button("Open Folder").clicked() {
                         open_file(&node.path);
-                        ui.close();
+                        menu_ui.close();
                     }
 
-                    if ui.button("Reveal in Explorer").clicked() {
+                    if menu_ui.button("Reveal in Explorer").clicked() {
                         reveal_in_explorer(&node.path);
-                        ui.close();
+                        menu_ui.close();
                     }
                 });
 
@@ -459,8 +469,8 @@ fn render_node(
                         egui::Sense::click(),
                     );
 
-                    fill.context_menu(|ui| {
-                        show_tree_context_menu(ui, sender);
+                    fill.context_menu(|context_ui| {
+                        show_tree_context_menu(context_ui, sender);
                     });
                 }
             });

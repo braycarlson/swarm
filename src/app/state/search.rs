@@ -67,28 +67,28 @@ impl SearchModel {
 
 #[derive(Clone, Debug, Default)]
 pub struct ParsedQuery {
-    pub commands: Vec<Command>,
+    pub commands: Vec<SearchCommand>,
     pub contains: Vec<String>,
-    pub content_patterns: Vec<String>,
     pub depth_max: Option<usize>,
+    pub duration_recent: Option<Duration>,
     pub exact: Vec<String>,
     pub excludes: Vec<String>,
-    pub extension_excludes: Vec<String>,
+    pub excludes_extension: Vec<String>,
+    pub excludes_git: Vec<GitFilter>,
+    pub excludes_name: Vec<String>,
+    pub excludes_path: Vec<String>,
     pub extensions: Vec<String>,
+    pub filter_type: Option<TypeFilter>,
+    pub filters_git: Vec<GitFilter>,
     pub format_override: Option<OutputFormat>,
-    pub git_excludes: Vec<GitFilter>,
-    pub git_filters: Vec<GitFilter>,
     pub lines_max: Option<u64>,
     pub lines_min: Option<u64>,
-    pub name_excludes: Vec<String>,
     pub names: Vec<String>,
-    pub path_excludes: Vec<String>,
     pub paths: Vec<String>,
-    pub recent_duration: Option<Duration>,
+    pub patterns_content: Vec<String>,
+    pub patterns_symbol: Vec<String>,
     pub size_max: Option<u64>,
     pub size_min: Option<u64>,
-    pub symbol_patterns: Vec<String>,
-    pub type_filter: Option<TypeFilter>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -98,7 +98,7 @@ pub enum TypeFilter {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Command {
+pub enum SearchCommand {
     Diff,
 }
 
@@ -175,7 +175,7 @@ impl FileMetadata {
         let (lines, content) = if load_content && metadata.is_file() {
             match std::fs::read_to_string(path) {
                 Ok(text) => {
-                    let line_count = count_lines_in_str(&text);
+                    let line_count = line_count_string(&text);
                     (Some(line_count), Some(Arc::<str>::from(text)))
                 }
                 Err(_) => (None, None),
@@ -219,7 +219,7 @@ impl FileMetadata {
             .map(|d| d.as_secs());
 
         let lines = if metadata.is_file() {
-            count_lines_fast(path)
+            line_count_fast(path)
         } else {
             None
         };
@@ -233,7 +233,7 @@ impl FileMetadata {
     }
 }
 
-fn count_lines_in_str(s: &str) -> u64 {
+fn line_count_string(s: &str) -> u64 {
     if s.is_empty() {
         return 0;
     }
@@ -248,7 +248,7 @@ fn count_lines_in_str(s: &str) -> u64 {
     count
 }
 
-fn count_lines_fast(path: &Path) -> Option<u64> {
+fn line_count_fast(path: &Path) -> Option<u64> {
     use std::io::Read;
 
     let mut file = std::fs::File::open(path).ok()?;
@@ -283,7 +283,7 @@ enum Token {
 
 impl ParsedQuery {
     pub fn is_expensive(&self) -> bool {
-        !self.content_patterns.is_empty() || !self.symbol_patterns.is_empty()
+        !self.patterns_content.is_empty() || !self.patterns_symbol.is_empty()
     }
 
     pub fn parse(query: &str) -> Self {
@@ -307,8 +307,8 @@ impl ParsedQuery {
         let mut current = String::new();
         let mut in_quotes = false;
 
-        for c in query.chars() {
-            match c {
+        for character in query.chars() {
+            match character {
                 '"' => {
                     if in_quotes {
                         if !current.is_empty() {
@@ -328,7 +328,7 @@ impl ParsedQuery {
                     }
                 }
                 _ => {
-                    current.push(c);
+                    current.push(character);
                 }
             }
         }
@@ -364,8 +364,8 @@ impl ParsedQuery {
     }
 
     fn process_plain_token(result: &mut ParsedQuery, token: &str) {
-        if let Some(cmd) = token.strip_prefix("--") {
-            Self::process_command(result, cmd);
+        if let Some(command) = token.strip_prefix("--") {
+            Self::process_command(result, command);
             return;
         }
 
@@ -388,13 +388,13 @@ impl ParsedQuery {
             match key.as_str() {
                 "ext" | "e" => {
                     for part in value.split(',') {
-                        let ext = part.trim().to_ascii_lowercase();
-                        let ext = ext.trim_start_matches('.');
-                        if !ext.is_empty() {
+                        let extension = part.trim().to_ascii_lowercase();
+                        let extension = extension.trim_start_matches('.');
+                        if !extension.is_empty() {
                             if is_exclude {
-                                result.extension_excludes.push(ext.to_string());
+                                result.excludes_extension.push(extension.to_string());
                             } else {
-                                result.extensions.push(ext.to_string());
+                                result.extensions.push(extension.to_string());
                             }
                         }
                     }
@@ -404,7 +404,7 @@ impl ParsedQuery {
                         let name = part.trim().to_ascii_lowercase();
                         if !name.is_empty() {
                             if is_exclude {
-                                result.name_excludes.push(name);
+                                result.excludes_name.push(name);
                             } else {
                                 result.names.push(name);
                             }
@@ -416,7 +416,7 @@ impl ParsedQuery {
                         let path = part.trim().to_ascii_lowercase();
                         if !path.is_empty() {
                             if is_exclude {
-                                result.path_excludes.push(path);
+                                result.excludes_path.push(path);
                             } else {
                                 result.paths.push(path);
                             }
@@ -427,7 +427,7 @@ impl ParsedQuery {
                     Self::parse_git_filter(result, value, is_exclude);
                 }
                 "type" | "t" => {
-                    result.type_filter = Self::parse_type_filter(value);
+                    result.filter_type = Self::parse_type_filter(value);
                 }
                 "size" | "s" => {
                     Self::parse_size_filter(result, value);
@@ -445,16 +445,16 @@ impl ParsedQuery {
                     }
                 }
                 "recent" | "r" => {
-                    result.recent_duration = Self::parse_duration(value);
+                    result.duration_recent = Self::parse_duration(value);
                 }
                 "content" | "c" => {
                     if !value.is_empty() {
-                        result.content_patterns.push(value.to_ascii_lowercase());
+                        result.patterns_content.push(value.to_ascii_lowercase());
                     }
                 }
                 "sym" | "symbol" | "def" | "fn" | "func" | "struct" | "class" => {
                     if !value.is_empty() {
-                        result.symbol_patterns.push(value.to_ascii_lowercase());
+                        result.patterns_symbol.push(value.to_ascii_lowercase());
                     }
                 }
                 _ => {
@@ -467,12 +467,12 @@ impl ParsedQuery {
         result.contains.push(token.to_ascii_lowercase());
     }
 
-    fn process_command(result: &mut ParsedQuery, cmd: &str) {
-        let cmd_lower = cmd.to_ascii_lowercase();
+    fn process_command(result: &mut ParsedQuery, command: &str) {
+        let command_lower = command.to_ascii_lowercase();
 
-        match cmd_lower.as_str() {
+        match command_lower.as_str() {
             "diff" | "d" => {
-                result.commands.push(Command::Diff);
+                result.commands.push(SearchCommand::Diff);
             }
             "plain" | "plain-text" | "text" => {
                 result.format_override = Some(OutputFormat::PlainText);
@@ -496,20 +496,20 @@ impl ParsedQuery {
 
             if let Some(filter) = GitFilter::from_str(part) {
                 if is_exclude {
-                    result.git_excludes.push(filter);
+                    result.excludes_git.push(filter);
                 } else {
-                    result.git_filters.push(filter);
+                    result.filters_git.push(filter);
                 }
 
                 continue;
             }
 
-            for c in part.chars() {
-                if let Some(filter) = GitFilter::from_char(c) {
+            for character in part.chars() {
+                if let Some(filter) = GitFilter::from_char(character) {
                     if is_exclude {
-                        result.git_excludes.push(filter);
+                        result.excludes_git.push(filter);
                     } else {
-                        result.git_filters.push(filter);
+                        result.filters_git.push(filter);
                     }
                 }
             }
@@ -552,7 +552,7 @@ impl ParsedQuery {
     fn parse_size_value(value: &str) -> Option<u64> {
         let value = value.trim().to_ascii_lowercase();
 
-        let (num_str, multiplier) = if value.ends_with("gb") {
+        let (number_string, multiplier) = if value.ends_with("gb") {
             (&value[..value.len() - 2], 1024 * 1024 * 1024)
         } else if value.ends_with("mb") {
             (&value[..value.len() - 2], 1024 * 1024)
@@ -570,7 +570,7 @@ impl ParsedQuery {
             (value.as_str(), 1)
         };
 
-        num_str.trim().parse::<u64>().ok().map(|n| n * multiplier)
+        number_string.trim().parse::<u64>().ok().map(|n| n * multiplier)
     }
 
     fn parse_lines_filter(result: &mut ParsedQuery, value: &str) {
@@ -605,7 +605,7 @@ impl ParsedQuery {
             return Some(Duration::from_secs(24 * 60 * 60));
         }
 
-        let (num_str, multiplier) = if value.ends_with('w') {
+        let (number_string, multiplier) = if value.ends_with('w') {
             (&value[..value.len() - 1], 7 * 24 * 60 * 60)
         } else if value.ends_with('d') {
             (&value[..value.len() - 1], 24 * 60 * 60)
@@ -617,7 +617,7 @@ impl ParsedQuery {
             return None;
         };
 
-        num_str
+        number_string
             .trim()
             .parse::<u64>()
             .ok()
@@ -629,26 +629,26 @@ impl ParsedQuery {
             && self.exact.is_empty()
             && self.excludes.is_empty()
             && self.extensions.is_empty()
-            && self.extension_excludes.is_empty()
+            && self.excludes_extension.is_empty()
             && self.names.is_empty()
-            && self.name_excludes.is_empty()
+            && self.excludes_name.is_empty()
             && self.paths.is_empty()
-            && self.path_excludes.is_empty()
-            && self.git_filters.is_empty()
-            && self.git_excludes.is_empty()
-            && self.type_filter.is_none()
+            && self.excludes_path.is_empty()
+            && self.filters_git.is_empty()
+            && self.excludes_git.is_empty()
+            && self.filter_type.is_none()
             && self.size_min.is_none()
             && self.size_max.is_none()
             && self.lines_min.is_none()
             && self.lines_max.is_none()
             && self.depth_max.is_none()
-            && self.content_patterns.is_empty()
-            && self.symbol_patterns.is_empty()
-            && self.recent_duration.is_none()
+            && self.patterns_content.is_empty()
+            && self.patterns_symbol.is_empty()
+            && self.duration_recent.is_none()
     }
 
-    pub fn has_command(&self, cmd: Command) -> bool {
-        self.commands.contains(&cmd)
+    pub fn has_command(&self, command: SearchCommand) -> bool {
+        self.commands.contains(&command)
     }
 
     pub fn has_depth_filter(&self) -> bool {
@@ -664,7 +664,7 @@ impl ParsedQuery {
             || self.needs_content()
             || self.size_min.is_some()
             || self.size_max.is_some()
-            || self.recent_duration.is_some()
+            || self.duration_recent.is_some()
     }
 
     pub fn needs_lines(&self) -> bool {
@@ -676,28 +676,28 @@ impl ParsedQuery {
     }
 
     pub fn requires_file_match(&self) -> bool {
-        matches!(self.type_filter, Some(TypeFilter::File))
+        matches!(self.filter_type, Some(TypeFilter::File))
     }
 
-    pub fn matches(&self, filename: &str, filepath: &str) -> bool {
-        self.matches_with_git(filename, filepath, None)
+    pub fn matches(&self, file_name: &str, file_path: &str) -> bool {
+        self.matches_with_git(file_name, file_path, None)
     }
 
     pub fn matches_with_git(
         &self,
-        filename: &str,
-        filepath: &str,
+        file_name: &str,
+        file_path: &str,
         git_status: Option<GitStatus>,
     ) -> bool {
-        let name_lower = filename.to_ascii_lowercase();
-        let path_lower = filepath.to_ascii_lowercase();
-        self.matches_full(&name_lower, &path_lower, git_status, false, None)
+        let name_lowercase = file_name.to_ascii_lowercase();
+        let lowercase_path = file_path.to_ascii_lowercase();
+        self.matches_full(&name_lowercase, &lowercase_path, git_status, false, None)
     }
 
     pub fn matches_full(
         &self,
-        name_lower: &str,
-        path_lower: &str,
+        name_lowercase: &str,
+        lowercase_path: &str,
         git_status: Option<GitStatus>,
         is_directory: bool,
         metadata: Option<&FileMetadata>,
@@ -707,32 +707,32 @@ impl ParsedQuery {
         }
 
         for exclude in &self.excludes {
-            if name_lower.contains(exclude.as_str()) || path_lower.contains(exclude.as_str()) {
+            if name_lowercase.contains(exclude.as_str()) || lowercase_path.contains(exclude.as_str()) {
                 return false;
             }
         }
 
-        for exclude in &self.name_excludes {
-            if name_lower.contains(exclude.as_str()) {
+        for exclude in &self.excludes_name {
+            if name_lowercase.contains(exclude.as_str()) {
                 return false;
             }
         }
 
-        for exclude in &self.path_excludes {
-            if path_lower.contains(exclude.as_str()) {
+        for exclude in &self.excludes_path {
+            if lowercase_path.contains(exclude.as_str()) {
                 return false;
             }
         }
 
-        for exclude in &self.extension_excludes {
-            if has_extension(name_lower, exclude) {
+        for exclude in &self.excludes_extension {
+            if has_extension(name_lowercase, exclude) {
                 return false;
             }
         }
 
-        if !self.git_excludes.is_empty() {
+        if !self.excludes_git.is_empty() {
             if let Some(status) = git_status {
-                for filter in &self.git_excludes {
+                for filter in &self.excludes_git {
                     if filter.matches(status) {
                         return false;
                     }
@@ -740,9 +740,9 @@ impl ParsedQuery {
             }
         }
 
-        if !self.git_filters.is_empty() {
+        if !self.filters_git.is_empty() {
             if let Some(status) = git_status {
-                let matches_git = self.git_filters.iter().any(|f| f.matches(status));
+                let matches_git = self.filters_git.iter().any(|f| f.matches(status));
 
                 if !matches_git {
                     return false;
@@ -752,7 +752,7 @@ impl ParsedQuery {
             }
         }
 
-        if let Some(type_filter) = self.type_filter {
+        if let Some(type_filter) = self.filter_type {
             let matches_type = match type_filter {
                 TypeFilter::Directory => is_directory,
                 TypeFilter::File => !is_directory,
@@ -764,21 +764,21 @@ impl ParsedQuery {
         }
 
         if !is_directory {
-            if let Some(meta) = metadata {
+            if let Some(metadata_item) = metadata {
                 if let Some(min) = self.size_min {
-                    if meta.size < min {
+                    if metadata_item.size < min {
                         return false;
                     }
                 }
 
                 if let Some(max) = self.size_max {
-                    if meta.size > max {
+                    if metadata_item.size > max {
                         return false;
                     }
                 }
 
                 if let Some(min) = self.lines_min {
-                    if let Some(lines) = meta.lines {
+                    if let Some(lines) = metadata_item.lines {
                         if lines < min {
                             return false;
                         }
@@ -788,7 +788,7 @@ impl ParsedQuery {
                 }
 
                 if let Some(max) = self.lines_max {
-                    if let Some(lines) = meta.lines {
+                    if let Some(lines) = metadata_item.lines {
                         if lines > max {
                             return false;
                         }
@@ -797,8 +797,8 @@ impl ParsedQuery {
                     }
                 }
 
-                if let Some(duration) = self.recent_duration {
-                    if let Some(modified) = meta.modified {
+                if let Some(duration) = self.duration_recent {
+                    if let Some(modified) = metadata_item.modified {
                         let now = SystemTime::now()
                             .duration_since(SystemTime::UNIX_EPOCH)
                             .unwrap_or_default()
@@ -816,22 +816,22 @@ impl ParsedQuery {
                 || self.size_max.is_some()
                 || self.lines_min.is_some()
                 || self.lines_max.is_some()
-                || self.recent_duration.is_some()
+                || self.duration_recent.is_some()
             {
                 return false;
             }
         }
 
         if !self.extensions.is_empty() {
-            let has_ext = self.extensions.iter().any(|ext| has_extension(name_lower, ext));
+            let has_extension_match = self.extensions.iter().any(|extension| has_extension(name_lowercase, extension));
 
-            if !has_ext {
+            if !has_extension_match {
                 return false;
             }
         }
 
         if !self.names.is_empty() {
-            let matches_name = self.names.iter().any(|n| name_lower.contains(n.as_str()));
+            let matches_name = self.names.iter().any(|n| name_lowercase.contains(n.as_str()));
 
             if !matches_name {
                 return false;
@@ -839,7 +839,7 @@ impl ParsedQuery {
         }
 
         if !self.paths.is_empty() {
-            let matches_path = self.paths.iter().any(|p| path_lower.contains(p.as_str()));
+            let matches_path = self.paths.iter().any(|p| lowercase_path.contains(p.as_str()));
 
             if !matches_path {
                 return false;
@@ -847,7 +847,7 @@ impl ParsedQuery {
         }
 
         if !self.exact.is_empty() {
-            let matches_exact = self.exact.iter().any(|e| name_lower == *e);
+            let matches_exact = self.exact.iter().any(|e| name_lowercase == *e);
 
             if !matches_exact {
                 return false;
@@ -856,7 +856,7 @@ impl ParsedQuery {
 
         if !self.contains.is_empty() {
             let matches_contains = self.contains.iter().all(|term| {
-                name_lower.contains(term.as_str()) || path_lower.contains(term.as_str())
+                name_lowercase.contains(term.as_str()) || lowercase_path.contains(term.as_str())
             });
 
             if !matches_contains {
@@ -868,14 +868,14 @@ impl ParsedQuery {
     }
 }
 
-fn has_extension(name_lower: &str, ext: &str) -> bool {
-    let needed = ext.len() + 1;
+fn has_extension(name_lowercase: &str, extension: &str) -> bool {
+    let needed = extension.len() + 1;
 
-    if name_lower.len() < needed {
+    if name_lowercase.len() < needed {
         return false;
     }
 
-    let dot_pos = name_lower.len() - needed;
+    let dot_position = name_lowercase.len() - needed;
 
-    name_lower.as_bytes()[dot_pos] == b'.' && &name_lower[dot_pos + 1..] == ext
+    name_lowercase.as_bytes()[dot_position] == b'.' && &name_lowercase[dot_position + 1..] == extension
 }

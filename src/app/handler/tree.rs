@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::app::message::{Cmd, CmdBuilder, Tree};
+use crate::app::message::{Command, CommandBuilder, Tree};
 use crate::app::state::{LoadStatus, Model, UiState};
 use crate::app::state::SearchModel;
 use crate::model::node::FileNode;
@@ -8,8 +8,8 @@ use crate::services::filesystem::git::GitService;
 
 use super::{load_node_children, sync_to_active_session, toggle_node};
 
-pub fn handle(model: &mut Model, ui: &mut UiState, msg: Tree) -> Cmd {
-    match msg {
+pub fn handle(model: &mut Model, ui: &mut UiState, message: Tree) -> Command {
+    match message {
         Tree::RefreshRequested => handle_tree_refresh_requested(model, ui),
         Tree::NodeToggled { path, checked, propagate } => { handle_tree_node_toggled(model, path, checked, propagate) }
         Tree::NodeExpanded { path } => handle_tree_node_expanded(model, path),
@@ -29,9 +29,9 @@ pub fn handle(model: &mut Model, ui: &mut UiState, msg: Tree) -> Cmd {
     }
 }
 
-fn handle_tree_refresh_requested(model: &mut Model, _ui: &mut UiState) -> Cmd {
+fn handle_tree_refresh_requested(model: &mut Model, _ui: &mut UiState) -> Command {
     if matches!(model.tree.load_status, LoadStatus::Loading { .. }) {
-        return Cmd::None;
+        return Command::None;
     }
 
     model.tree.states = Some(model.tree.collect_checkbox_states());
@@ -43,8 +43,8 @@ fn handle_tree_refresh_requested(model: &mut Model, _ui: &mut UiState) -> Cmd {
 
     let nodes = std::mem::take(&mut model.tree.nodes);
 
-    let builder = CmdBuilder::new()
-        .add(Cmd::RefreshTree {
+    let builder = CommandBuilder::new()
+        .add(Command::RefreshTree {
             nodes,
             options: Arc::clone(&model.options),
         });
@@ -52,13 +52,13 @@ fn handle_tree_refresh_requested(model: &mut Model, _ui: &mut UiState) -> Cmd {
     builder.build()
 }
 
-fn handle_tree_node_toggled(model: &mut Model, path: Vec<usize>, checked: bool, propagate: bool) -> Cmd {
+fn handle_tree_node_toggled(model: &mut Model, path: Vec<usize>, checked: bool, propagate: bool) -> Command {
     let path_u32: Vec<u32> = path.iter().map(|&x| x as u32).collect();
 
     if !propagate {
         toggle_node(&mut model.tree.nodes, &path_u32, checked, false, &model.options);
         sync_to_active_session(model);
-        return Cmd::None;
+        return Command::None;
     }
 
     if let Some(result) = model.background_loader.check_results()
@@ -72,15 +72,15 @@ fn handle_tree_node_toggled(model: &mut Model, path: Vec<usize>, checked: bool, 
         }
 
     let mut current = &model.tree.nodes;
-    let mut target_is_dir = false;
+    let mut target_is_directory = false;
     let mut has_unloaded = false;
 
     for &index in &path_u32 {
         if let Some(node) = current.get(index as usize) {
             if path_u32.last() == Some(&index) {
-                target_is_dir = node.is_directory();
+                target_is_directory = node.is_directory();
 
-                if target_is_dir {
+                if target_is_directory {
                     has_unloaded = check_has_unloaded(node);
                 }
 
@@ -91,7 +91,7 @@ fn handle_tree_node_toggled(model: &mut Model, path: Vec<usize>, checked: bool, 
         }
     }
 
-    if target_is_dir && has_unloaded {
+    if target_is_directory && has_unloaded {
         model.tree.load_status = LoadStatus::Loading {
             message: "Loading directories...".to_string(),
             progress: (0, 0),
@@ -99,25 +99,25 @@ fn handle_tree_node_toggled(model: &mut Model, path: Vec<usize>, checked: bool, 
 
         let nodes = std::mem::take(&mut model.tree.nodes);
 
-        return Cmd::PropagateCheckedWithLoad {
+        return Command::PropagateCheckedWithLoad {
             nodes,
             path: path_u32,
             checked,
             options: Arc::clone(&model.options),
             search: model.search.clone(),
-            git: model.git.clone(),
+            git: model.git_service.clone(),
         };
     }
 
     if model.search.has_query() {
-        toggle_node_filtered(&mut model.tree.nodes, &path_u32, checked, &model.options, &model.search, &model.git);
+        toggle_node_filtered(&mut model.tree.nodes, &path_u32, checked, &model.options, &model.search, &model.git_service);
     } else {
         toggle_node(&mut model.tree.nodes, &path_u32, checked, propagate, &model.options);
     }
 
     sync_to_active_session(model);
 
-    Cmd::None
+    Command::None
 }
 
 fn toggle_node_filtered(
@@ -126,7 +126,7 @@ fn toggle_node_filtered(
     checked: bool,
     options: &crate::model::options::Options,
     search: &SearchModel,
-    git: &GitService,
+    git_service: &GitService,
 ) {
     use crate::services::tree::traversal::Traversable;
 
@@ -135,16 +135,16 @@ fn toggle_node_filtered(
     }
 
     let mut current = &mut *nodes;
-    let path_len = path.len() as u32;
+    let path_length = path.len() as u32;
     let mut depth: u32 = 0;
 
-    while depth < path_len {
-        if depth >= super::MAX_PATH_DEPTH {
+    while depth < path_length {
+        if depth >= super::PATH_DEPTH_MAX {
             break;
         }
 
         let index_value = path[depth as usize];
-        let is_last = (depth + 1) == path_len;
+        let is_last = (depth + 1) == path_length;
 
         if is_last {
             let node_option = current.get_mut(index_value as usize);
@@ -157,7 +157,7 @@ fn toggle_node_filtered(
             node.checked = checked;
 
             if node.is_directory() {
-                node.propagate_checked_filtered(checked, options, search, Some(git));
+                node.propagate_checked_filtered(checked, options, search, Some(git_service));
             }
 
             break;
@@ -192,15 +192,15 @@ fn check_has_unloaded(node: &FileNode) -> bool {
     false
 }
 
-fn handle_tree_node_expanded(model: &mut Model, path: Vec<usize>) -> Cmd {
+fn handle_tree_node_expanded(model: &mut Model, path: Vec<usize>) -> Command {
     let path_u32: Vec<u32> = path.iter().map(|&x| x as u32).collect();
     load_node_children(&mut model.tree.nodes, &path_u32, &model.options);
     sync_to_active_session(model);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_tree_loaded(model: &mut Model, _ui: &mut UiState, nodes: Vec<FileNode>) -> Cmd {
+fn handle_tree_loaded(model: &mut Model, _ui: &mut UiState, nodes: Vec<FileNode>) -> Command {
     let current_states = model.tree.collect_checkbox_states();
 
     let states_to_restore = if let Some(saved_states) = model.tree.states.take() {
@@ -218,7 +218,7 @@ fn handle_tree_loaded(model: &mut Model, _ui: &mut UiState, nodes: Vec<FileNode>
     model.tree.nodes = nodes.clone();
     model.tree.restore_checkbox_states(&states_to_restore);
     model.tree.load_status = LoadStatus::Loaded;
-    model.tree.update_file_count();
+    model.tree.update_files_count();
 
     model.refresh_git_status();
 
@@ -226,72 +226,72 @@ fn handle_tree_loaded(model: &mut Model, _ui: &mut UiState, nodes: Vec<FileNode>
 
     model.background_loader.start_loading(nodes, (*model.options).clone());
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_tree_load_progress(model: &mut Model, current: String, processed: usize, total: usize) -> Cmd {
+fn handle_tree_load_progress(model: &mut Model, current: String, processed: usize, total: usize) -> Command {
     model.tree.load_status = LoadStatus::Loading {
         message: current,
         progress: (processed, total),
     };
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_tree_load_failed(model: &mut Model, error: String) -> Cmd {
+fn handle_tree_load_failed(model: &mut Model, error: String) -> Command {
     model.tree.load_status = LoadStatus::Failed(error);
-    Cmd::None
+    Command::None
 }
 
-fn handle_propagate_started(model: &mut Model) -> Cmd {
+fn handle_propagate_started(model: &mut Model) -> Command {
     model.tree.load_status = LoadStatus::Loading {
         message: "Loading directories...".to_string(),
         progress: (0, 0),
     };
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_propagate_completed(model: &mut Model, nodes: Vec<FileNode>) -> Cmd {
+fn handle_propagate_completed(model: &mut Model, nodes: Vec<FileNode>) -> Command {
     model.tree.nodes = nodes;
     model.tree.load_status = LoadStatus::Loaded;
-    model.tree.update_file_count();
+    model.tree.update_files_count();
     sync_to_active_session(model);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_propagate_failed(error: String) -> Cmd {
+fn handle_propagate_failed(error: String) -> Command {
     eprintln!("Propagate check with load failed: {}", error);
-    Cmd::None
+    Command::None
 }
 
-fn handle_background_load_progress(_model: &mut Model, _loaded: usize, _total: usize) -> Cmd {
-    Cmd::None
+fn handle_background_load_progress(_model: &mut Model, _loaded: usize, _total: usize) -> Command {
+    Command::None
 }
 
-fn handle_background_load_completed(model: &mut Model, nodes: Vec<FileNode>) -> Cmd {
+fn handle_background_load_completed(model: &mut Model, nodes: Vec<FileNode>) -> Command {
     let current_states = model.tree.collect_checkbox_states();
     model.tree.nodes = nodes;
     model.tree.restore_checkbox_states(&current_states);
-    model.tree.update_file_count();
+    model.tree.update_files_count();
     sync_to_active_session(model);
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_select_all(model: &mut Model) -> Cmd {
+fn handle_select_all(model: &mut Model) -> Command {
     set_all_checked(&mut model.tree.nodes, true);
-    model.tree.update_file_count();
+    model.tree.update_files_count();
     sync_to_active_session(model);
-    Cmd::None
+    Command::None
 }
 
-fn handle_deselect_all(model: &mut Model) -> Cmd {
+fn handle_deselect_all(model: &mut Model) -> Command {
     set_all_checked(&mut model.tree.nodes, false);
-    model.tree.update_file_count();
+    model.tree.update_files_count();
     sync_to_active_session(model);
-    Cmd::None
+    Command::None
 }
 
 fn set_all_checked(nodes: &mut [FileNode], checked: bool) {
@@ -301,22 +301,22 @@ fn set_all_checked(nodes: &mut [FileNode], checked: bool) {
     }
 }
 
-fn handle_bulk_select_toggled(ui: &mut UiState) -> Cmd {
-    ui.show_bulk_select = !ui.show_bulk_select;
+fn handle_bulk_select_toggled(ui: &mut UiState) -> Command {
+    ui.bulk_select_show = !ui.bulk_select_show;
 
-    if !ui.show_bulk_select {
+    if !ui.bulk_select_show {
         ui.bulk_select_text.clear();
     }
 
-    Cmd::None
+    Command::None
 }
 
-fn handle_bulk_select_text_changed(ui: &mut UiState, text: String) -> Cmd {
+fn handle_bulk_select_text_changed(ui: &mut UiState, text: String) -> Command {
     ui.bulk_select_text = text;
-    Cmd::None
+    Command::None
 }
 
-fn handle_bulk_select_applied(model: &mut Model, ui: &mut UiState) -> Cmd {
+fn handle_bulk_select_applied(model: &mut Model, ui: &mut UiState) -> Command {
     let paths: Vec<String> = ui.bulk_select_text
         .lines()
         .map(|line| line.trim())
@@ -325,20 +325,20 @@ fn handle_bulk_select_applied(model: &mut Model, ui: &mut UiState) -> Cmd {
         .collect();
 
     if paths.is_empty() {
-        return Cmd::None;
+        return Command::None;
     }
 
     set_all_checked(&mut model.tree.nodes, false);
     bulk_select_recursive(&mut model.tree.nodes, &paths);
-    model.tree.update_file_count();
+    model.tree.update_files_count();
     sync_to_active_session(model);
 
-    let count = count_checked(&model.tree.nodes);
+    let count = checked_count(&model.tree.nodes);
     ui.toast.success(format!("{} files selected", count));
-    ui.show_bulk_select = false;
+    ui.bulk_select_show = false;
     ui.bulk_select_text.clear();
 
-    Cmd::None
+    Command::None
 }
 
 fn bulk_select_recursive(nodes: &mut [FileNode], paths: &[String]) {
@@ -359,7 +359,7 @@ fn bulk_select_recursive(nodes: &mut [FileNode], paths: &[String]) {
     }
 }
 
-fn count_checked(nodes: &[FileNode]) -> usize {
+fn checked_count(nodes: &[FileNode]) -> usize {
     let mut count = 0;
 
     for node in nodes {
@@ -367,7 +367,7 @@ fn count_checked(nodes: &[FileNode]) -> usize {
             count += 1;
         }
 
-        count += count_checked(&node.children);
+        count += checked_count(&node.children);
     }
 
     count

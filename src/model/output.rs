@@ -86,7 +86,7 @@ impl OutputFormat {
             .collect();
 
         serde_json::to_string_pretty(&map)
-            .map_err(|e| SwarmError::Other(format!("Failed to serialize JSON: {}", e)))
+            .map_err(|error| SwarmError::Other(format!("Failed to serialize JSON: {}", error)))
     }
 
     fn format_xml(files: &[(String, String)]) -> String {
@@ -108,28 +108,28 @@ impl OutputFormat {
     }
 }
 
-fn append_xml_escaped(out: &mut String, s: &str) {
+fn append_xml_escaped(output_string: &mut String, s: &str) {
     for c in s.chars() {
         match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            _ => out.push(c),
+            '&' => output_string.push_str("&amp;"),
+            '<' => output_string.push_str("&lt;"),
+            '>' => output_string.push_str("&gt;"),
+            '"' => output_string.push_str("&quot;"),
+            '\'' => output_string.push_str("&apos;"),
+            _ => output_string.push(c),
         }
     }
 }
 
-fn append_cdata_escaped(out: &mut String, s: &str) {
-    let pat = "]]>";
+fn append_cdata_escaped(output_string: &mut String, s: &str) {
+    let pattern = "]]>";
     let mut start = 0;
 
-    while let Some(pos) = s[start..].find(pat) {
-        out.push_str(&s[start..start + pos]);
-        out.push_str("]]]]><![CDATA[>");
-        start += pos + pat.len();
+    while let Some(position) = s[start..].find(pattern) {
+        output_string.push_str(&s[start..start + position]);
+        output_string.push_str("]]]]><![CDATA[>");
+        start += position + pattern.len();
     }
 
-    out.push_str(&s[start..]);
+    output_string.push_str(&s[start..]);
 }
