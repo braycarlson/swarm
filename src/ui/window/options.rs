@@ -87,7 +87,7 @@ pub fn render(
                 ui.add_space(10.0);
 
                 match ui_state.options_tab {
-                    OptionsTab::General => render_general(ui, model, sender),
+                    OptionsTab::General => render_general(ui, model, ui_state, sender),
                     OptionsTab::Includes => render_includes(ui, model, ui_state, sender),
                     OptionsTab::Excludes => render_excludes(ui, model, ui_state, sender),
                 }
@@ -117,7 +117,7 @@ fn render_tab_bar(ui: &mut egui::Ui, ui_state: &UiState, sender: &Sender<Message
     });
 }
 
-fn render_general(ui: &mut egui::Ui, model: &Model, sender: &Sender<Message>) {
+fn render_general(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender: &Sender<Message>) {
     egui::Frame::dark_canvas(ui.style())
         .fill(ui.visuals().extreme_bg_color)
         .inner_margin(8.0)
@@ -143,7 +143,7 @@ fn render_general(ui: &mut egui::Ui, model: &Model, sender: &Sender<Message>) {
                         ui.separator();
                         ui.add_space(10.0);
 
-                        render_appearance_section(ui, model, sender);
+                        render_appearance_section(ui, model, ui_state, sender);
 
                         #[cfg(windows)]
                         {
@@ -211,7 +211,7 @@ fn render_behavior_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Mes
     }
 }
 
-fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<Message>) {
+fn render_appearance_section(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender: &Sender<Message>) {
     ui.label(egui::RichText::new("Appearance").strong().color(ui.visuals().weak_text_color()));
     ui.add_space(5.0);
 
@@ -235,8 +235,10 @@ fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<M
     ui.horizontal(|ui| {
         ui.label("UI Scale:");
 
-        let current_scale = model.options.ui_scale.unwrap_or(1.0);
-        let mut scale = current_scale;
+        let display_scale = ui_state.ui_scale_draft
+            .unwrap_or_else(|| model.options.effective_ui_scale());
+
+        let mut scale = display_scale;
 
         let slider = ui.add(
             egui::Slider::new(&mut scale, 0.5..=3.0)
@@ -248,7 +250,15 @@ fn render_appearance_section(ui: &mut egui::Ui, model: &Model, sender: &Sender<M
             sender.send(Message::Options(Options_::UiScaleChanged(scale))).ok();
         }
 
-        if model.options.ui_scale.is_some() {
+        if ui_state.ui_scale_draft.is_some() {
+            if ui.button("Apply").clicked() {
+                sender.send(Message::Options(Options_::UiScaleApplied)).ok();
+            }
+        }
+
+        let has_override = ui_state.ui_scale_draft.is_some() || model.options.ui_scale.is_some();
+
+        if has_override {
             if ui.button("Reset").clicked() {
                 sender.send(Message::Options(Options_::UiScaleReset)).ok();
             }

@@ -506,19 +506,13 @@ fn open_file(path: &Path) {
 }
 
 fn reveal_in_explorer(path: &Path) {
-    let target = if path.is_file() {
-        path.parent().unwrap_or(path)
-    } else {
-        path
-    };
-
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         let _ = Command::new("explorer")
-            .arg(target)
+            .arg(format!("/select,{}", path.display()))
             .creation_flags(CREATE_NO_WINDOW)
             .spawn();
     }
@@ -526,12 +520,14 @@ fn reveal_in_explorer(path: &Path) {
     #[cfg(target_os = "macos")]
     {
         let _ = std::process::Command::new("open")
-            .arg(target)
+            .args(["-R", &path.display().to_string()])
             .spawn();
     }
 
     #[cfg(target_os = "linux")]
     {
+        let target = path.parent().unwrap_or(path);
+
         let _ = std::process::Command::new("xdg-open")
             .arg(target)
             .spawn();

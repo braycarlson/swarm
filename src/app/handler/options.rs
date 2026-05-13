@@ -9,8 +9,9 @@ pub fn handle(model: &mut Model, ui: &mut UiState, message: Options_) -> Command
         Options_::Closed => handle_options_closed(model, ui),
         Options_::TabChanged(tab) => handle_options_tab_changed(ui, tab),
         Options_::ThemeChanged(theme) => handle_option_theme_changed(model, ui, theme),
-        Options_::UiScaleChanged(scale) => handle_option_ui_scale_changed(model, scale),
-        Options_::UiScaleReset => handle_option_ui_scale_reset(model),
+        Options_::UiScaleApplied => handle_option_ui_scale_applied(model, ui),
+        Options_::UiScaleChanged(scale) => handle_option_ui_scale_changed(ui, scale),
+        Options_::UiScaleReset => handle_option_ui_scale_reset(model, ui),
         Options_::UseIconChanged(value) => handle_option_use_icon_changed(model, value),
         Options_::ShowHiddenChanged(value) => handle_option_show_hidden_changed(model, value),
         Options_::DeleteSessionsChanged(value) => handle_option_delete_sessions_changed(model, value),
@@ -21,6 +22,7 @@ pub fn handle(model: &mut Model, ui: &mut UiState, message: Options_) -> Command
 
 fn handle_options_opened(model: &mut Model, ui: &mut UiState) -> Command {
     ui.options_show = true;
+    ui.ui_scale_draft = None;
     model.save_original_options();
 
     Command::None
@@ -28,6 +30,14 @@ fn handle_options_opened(model: &mut Model, ui: &mut UiState) -> Command {
 
 fn handle_options_closed(model: &mut Model, ui: &mut UiState) -> Command {
     ui.options_show = false;
+
+    if let Some(scale) = ui.ui_scale_draft.take() {
+        let mut new_options = (*model.options).clone();
+        new_options.ui_scale = Some(scale.clamp(0.5, 3.0));
+
+        let _ = new_options.save();
+        model.update_options(new_options);
+    }
 
     if model.options_changed() {
         model.tree.states = Some(model.tree.collect_checkbox_states());
@@ -58,13 +68,20 @@ fn handle_option_theme_changed(model: &mut Model, ui: &mut UiState, theme: crate
     Command::None
 }
 
-fn handle_option_ui_scale_changed(model: &mut Model, scale: f32) -> Command {
-    let mut new_options = (*model.options).clone();
-    new_options.ui_scale = Some(scale.clamp(0.5, 3.0));
+fn handle_option_ui_scale_applied(model: &mut Model, ui: &mut UiState) -> Command {
+    if let Some(scale) = ui.ui_scale_draft.take() {
+        let mut new_options = (*model.options).clone();
+        new_options.ui_scale = Some(scale.clamp(0.5, 3.0));
 
-    let _ = new_options.save();
-    model.update_options(new_options);
+        let _ = new_options.save();
+        model.update_options(new_options);
+    }
 
+    Command::None
+}
+
+fn handle_option_ui_scale_changed(ui: &mut UiState, scale: f32) -> Command {
+    ui.ui_scale_draft = Some(scale.clamp(0.5, 3.0));
     Command::None
 }
 
@@ -118,7 +135,9 @@ fn handle_option_output_format_changed(model: &mut Model, format: crate::model::
     Command::None
 }
 
-fn handle_option_ui_scale_reset(model: &mut Model) -> Command {
+fn handle_option_ui_scale_reset(model: &mut Model, ui: &mut UiState) -> Command {
+    ui.ui_scale_draft = None;
+
     let mut new_options = (*model.options).clone();
     new_options.ui_scale = None;
 

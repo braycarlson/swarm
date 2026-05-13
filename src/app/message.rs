@@ -101,6 +101,7 @@ pub enum Options_ {
     Closed,
     TabChanged(OptionsTab),
     ThemeChanged(Theme),
+    UiScaleApplied,
     UiScaleChanged(f32),
     UiScaleReset,
     UseIconChanged(bool),

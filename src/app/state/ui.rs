@@ -77,6 +77,7 @@ pub struct UiState {
     pub theme: Theme,
     pub toast: ToastSystem,
     pub tree_generate_in_progress: bool,
+    pub ui_scale_draft: Option<f32>,
 }
 
 impl UiState {
@@ -108,6 +109,7 @@ impl UiState {
             theme,
             toast: ToastSystem::new(),
             tree_generate_in_progress: false,
+            ui_scale_draft: None,
         }
     }
 
