@@ -257,6 +257,7 @@ pub fn build_filter_entries(nodes: &[FileNode], query: &ParsedQuery) -> Vec<Filt
 mod tests {
     use super::*;
     use crate::model::node::NodeKind;
+    use std::path::MAIN_SEPARATOR;
 
     fn directory(path: &str, children: Vec<FileNode>) -> FileNode {
         let mut node = FileNode::with_kind(PathBuf::from(path), NodeKind::Directory);
@@ -286,7 +287,7 @@ mod tests {
         let entries = build_filter_entries(&tree(), &ParsedQuery::default());
 
         assert_eq!(entries.len(), 2);
-        assert_eq!(&*entries[0].path_lowercase, "/root/alpha.rs");
+        assert_eq!(&*entries[0].path_lowercase, format!("/root{MAIN_SEPARATOR}alpha.rs"));
         assert_eq!(entries[0].name_lowercase(), "alpha.rs");
     }
 
