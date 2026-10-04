@@ -1,164 +1,119 @@
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
-use std::sync::mpsc::Sender;
+use alloc::sync::Arc;
+use std::sync::mpsc::SyncSender;
 
-use rayon::prelude::*;
-
-use crate::app::state::search::FileMetadata;
 use crate::model::node::FileNode;
-use crate::model::options::Options;
-use crate::services::tree::traversal::Traversable;
+use crate::services::filesystem::filter::GlobPathFilter;
+use crate::services::tree::loader::{self, LoadSummary};
 
 use super::core::{Worker, WorkerTask};
+use super::generation::Generation;
 
-pub enum BackgroundLoadCommand {
-    Start(Vec<FileNode>, Options),
-    Stop,
+pub struct BackgroundOutcome {
+    pub generation: u64,
+    pub nodes: Vec<FileNode>,
+    pub session: String,
+    pub summary: LoadSummary,
 }
 
-pub enum BackgroundLoadResult {
-    NodesUpdated(Vec<FileNode>),
-    Progress(usize, usize),
+pub struct BackgroundRequest {
+    pub filter: Arc<GlobPathFilter>,
+    pub generation: u64,
+    pub nodes: Vec<FileNode>,
+    pub session: String,
 }
 
-pub struct BackgroundLoadTask {
-    is_running: Arc<AtomicBool>,
+struct BackgroundTask {
+    generation: Generation,
 }
 
-impl BackgroundLoadTask {
-    fn new() -> Self {
-        Self {
-            is_running: Arc::new(AtomicBool::new(false)),
-        }
-    }
+impl WorkerTask for BackgroundTask {
+    type Command = Box<BackgroundRequest>;
+    type Result = Box<BackgroundOutcome>;
 
-    fn load_recursively(
-        nodes: &mut [FileNode],
-        options: &Options,
-        result_sender: &Sender<BackgroundLoadResult>,
-        loaded: &AtomicUsize,
-        total: usize,
-    ) {
-        nodes.par_iter_mut().for_each_with(
-            result_sender.clone(),
-            |sender, node| {
-                if node.is_file() {
-                    if node.metadata.is_none() {
-                        node.metadata = FileMetadata::from_path_with_lines(&node.path);
-                    }
-                    return;
-                }
+    fn process(&mut self, request: Self::Command, results: &SyncSender<Self::Result>) {
+        let BackgroundRequest {
+            filter,
+            generation,
+            mut nodes,
+            session,
+        } = *request;
 
-                if !node.is_directory() {
-                    return;
-                }
-
-                if !node.loaded && node.load_children(options).is_ok() {
-                    let count = loaded.fetch_add(1, Ordering::Relaxed) + 1;
-
-                    if count.is_multiple_of(100) {
-                        let _ = sender.send(BackgroundLoadResult::Progress(count, total));
-                    }
-                }
-
-                Self::load_recursively(&mut node.children, options, &*sender, loaded, total);
-            },
-        );
-    }
-
-    fn unloaded_count(nodes: &[FileNode]) -> usize {
-        let mut count: usize = 0;
-
-        for node in nodes {
-            if node.is_directory() {
-                if !node.loaded {
-                    count += 1;
-                }
-
-                if node.loaded {
-                    count += Self::unloaded_count(&node.children);
-                }
-            }
+        if !self.generation.is_current(generation) {
+            return;
         }
 
-        count
-    }
-}
+        let summary = loader::load_tree(&mut nodes, &filter, |_| {
+            self.generation.is_current(generation)
+        });
 
-impl WorkerTask for BackgroundLoadTask {
-    type Command = BackgroundLoadCommand;
-    type Result = BackgroundLoadResult;
-
-    fn process(&mut self, command: Self::Command, result_sender: &Sender<Self::Result>) {
-        match command {
-            BackgroundLoadCommand::Start(mut nodes, options) => {
-                self.is_running.store(true, Ordering::Relaxed);
-
-                let total = Self::unloaded_count(&nodes);
-                let loaded = AtomicUsize::new(0);
-
-                Self::load_recursively(&mut nodes, &options, result_sender, &loaded, total);
-
-                self.is_running.store(false, Ordering::Relaxed);
-                let _ = result_sender.send(BackgroundLoadResult::NodesUpdated(nodes));
-            }
-            BackgroundLoadCommand::Stop => {
-                self.is_running.store(false, Ordering::Relaxed);
-            }
+        if !self.generation.is_current(generation) {
+            return;
         }
+
+        let outcome = BackgroundOutcome {
+            generation,
+            nodes,
+            session,
+            summary,
+        };
+
+        let _ = results.send(Box::new(outcome));
     }
 }
 
 pub struct BackgroundLoader {
-    is_running: Arc<AtomicBool>,
-    worker: Worker<BackgroundLoadTask>,
+    generation: Generation,
+    worker: Worker<BackgroundTask>,
+}
+
+impl BackgroundLoader {
+    pub fn check_results(&self) -> Option<Box<BackgroundOutcome>> {
+        self.worker.try_recv()
+    }
+
+    pub fn is_current(&self, generation: u64) -> bool {
+        self.generation.is_current(generation)
+    }
+
+    pub fn new() -> Self {
+        let generation = Generation::default();
+
+        let task = BackgroundTask {
+            generation: generation.clone(),
+        };
+
+        Self {
+            generation,
+            worker: Worker::spawn("background-loader", task),
+        }
+    }
+
+    pub fn start(
+        &self,
+        nodes: Vec<FileNode>,
+        filter: Arc<GlobPathFilter>,
+        session: String,
+    ) -> bool {
+        assert_ne!(session, "");
+
+        let request = BackgroundRequest {
+            filter,
+            generation: self.generation.advance(),
+            nodes,
+            session,
+        };
+
+        self.worker.send(Box::new(request))
+    }
+
+    pub fn stop(&self) {
+        let _ = self.generation.advance();
+    }
 }
 
 impl Default for BackgroundLoader {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl BackgroundLoader {
-    pub fn new() -> Self {
-        let task = BackgroundLoadTask::new();
-        let is_running = Arc::clone(&task.is_running);
-        let worker = Worker::spawn(task);
-
-        Self {
-            is_running,
-            worker,
-        }
-    }
-
-    pub fn check_results(&self) -> Option<BackgroundLoadResult> {
-        self.worker.try_recv()
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.is_running.load(Ordering::Relaxed)
-    }
-
-    pub fn start_loading(&self, nodes: Vec<FileNode>, options: Options) -> bool {
-        if self.is_running() {
-            return false;
-        }
-
-        self.worker.send(BackgroundLoadCommand::Start(nodes, options))
-    }
-
-    pub fn stop(&self) {
-        let _ = self.worker.send(BackgroundLoadCommand::Stop);
-    }
-}
-
-impl Clone for BackgroundLoader {
-    fn clone(&self) -> Self {
-        Self {
-            is_running: Arc::clone(&self.is_running),
-            worker: self.worker.clone(),
-        }
     }
 }
 

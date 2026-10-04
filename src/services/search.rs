@@ -1,174 +1,309 @@
-use std::cell::RefCell;
+use std::fs;
 use std::path::Path;
 
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
-use grep_searcher::SearcherBuilder;
 use grep_searcher::sinks::UTF8;
-use rustc_hash::FxHashMap;
-use tree_sitter::Parser;
+use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder};
+use tree_sitter::Node;
 
+use crate::model::node::Visit;
+use crate::model::query::PATTERN_COUNT_MAX;
+use crate::services::parser::{Parsers, walk_subtree};
 use crate::services::skeleton::language::Language;
 
-thread_local! {
-    static SEARCHER: RefCell<grep_searcher::Searcher> = RefCell::new(
-        SearcherBuilder::new()
-            .binary_detection(grep_searcher::BinaryDetection::quit(b'\x00'))
-            .build()
-    );
+const IDENTIFIER_KINDS: [&str; 3] = ["identifier", "property_identifier", "type_identifier"];
 
-    static PARSERS: RefCell<FxHashMap<Language, Parser>> = RefCell::new(FxHashMap::default());
+pub struct ContentMatchers {
+    matcher: Option<RegexMatcher>,
+    patterns: Vec<String>,
 }
 
-pub fn build_content_matchers(patterns: &[String]) -> Vec<RegexMatcher> {
-    patterns
-        .iter()
-        .filter_map(|pattern| {
-            RegexMatcherBuilder::new()
-                .case_insensitive(true)
-                .build(&escape_regex(pattern))
-                .ok()
-        })
-        .collect()
-}
-
-pub fn content_matches(path: &Path, matchers: &[RegexMatcher]) -> bool {
-    if matchers.is_empty() {
-        return true;
+impl ContentMatchers {
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
     }
 
-    SEARCHER.with(|searcher| {
-        let mut searcher = searcher.borrow_mut();
+    pub fn new(patterns: &[String]) -> Self {
+        assert!(patterns.len() <= PATTERN_COUNT_MAX);
 
-        for matcher in matchers {
-            let mut found = false;
-
-            let result = searcher.search_path(
-                matcher,
-                path,
-                UTF8(|_, _| {
-                    found = true;
-                    Ok(false)
-                }),
-            );
-
-            if result.is_err() || !found {
-                return false;
-            }
+        if patterns.is_empty() {
+            return Self {
+                matcher: None,
+                patterns: Vec::new(),
+            };
         }
 
-        true
-    })
+        let alternation = patterns
+            .iter()
+            .map(|pattern| escape_regex(pattern))
+            .collect::<Vec<String>>()
+            .join("|");
+
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(true)
+            .build(&alternation)
+            .expect("an alternation of escaped literals compiles");
+
+        let lowercase: Vec<String> = patterns
+            .iter()
+            .map(|pattern| pattern.to_ascii_lowercase())
+            .collect();
+
+        debug_assert_eq!(lowercase.len(), patterns.len());
+
+        Self {
+            matcher: Some(matcher),
+            patterns: lowercase,
+        }
+    }
 }
 
-pub fn symbol_matches(path: &Path, patterns: &[String]) -> bool {
+#[derive(Default)]
+pub struct SearchScratch {
+    line: String,
+    parsers: Parsers,
+    searcher: Option<Searcher>,
+}
+
+pub fn content_matches(
+    path: &Path,
+    matchers: &ContentMatchers,
+    scratch: &mut SearchScratch,
+) -> bool {
+    let Some(matcher) = matchers.matcher.as_ref() else {
+        debug_assert_eq!(matchers.patterns.len(), 0);
+
+        return true;
+    };
+
+    let full = mask_full(matchers.patterns.len());
+    let lowercase = &mut scratch.line;
+    let mut satisfied: u64 = 0;
+
+    let searcher = scratch.searcher.get_or_insert_with(|| {
+        SearcherBuilder::new()
+            .binary_detection(BinaryDetection::quit(b'\x00'))
+            .build()
+    });
+
+    let outcome = searcher.search_path(
+        matcher,
+        path,
+        UTF8(|_, line| {
+            lowercase.clear();
+            lowercase.push_str(line);
+            lowercase.make_ascii_lowercase();
+
+            satisfied = mark_satisfied(&matchers.patterns, lowercase, satisfied);
+
+            Ok(satisfied != full)
+        }),
+    );
+
+    if outcome.is_err() {
+        return false;
+    }
+
+    debug_assert_eq!(satisfied & !full, 0);
+
+    satisfied == full
+}
+
+fn escape_regex(pattern: &str) -> String {
+    let mut escaped = String::with_capacity(pattern.len() * 2);
+
+    for character in pattern.chars() {
+        if matches!(
+            character,
+            '$' | '(' | ')' | '*' | '+' | '.' | '?' | '[' | '\\' | ']' | '^' | '{' | '|' | '}',
+        ) {
+            escaped.push('\\');
+        }
+
+        escaped.push(character);
+    }
+
+    debug_assert!(escaped.len() >= pattern.len());
+
+    escaped
+}
+
+fn is_definition(kind: &str, language: Language) -> bool {
+    language.definition_types().contains(&kind)
+        || language.class_types().contains(&kind)
+        || language.constant_types().contains(&kind)
+}
+
+fn mark_satisfied(patterns: &[String], text_lowercase: &str, satisfied: u64) -> u64 {
+    debug_assert!(patterns.len() <= PATTERN_COUNT_MAX);
+
+    let mut found: u64 = 0;
+
+    for (index, pattern) in patterns.iter().enumerate() {
+        let bit = 1_u64 << index;
+
+        if satisfied & bit != 0 {
+            continue;
+        }
+
+        if text_lowercase.contains(pattern.as_str()) {
+            found |= bit;
+        }
+    }
+
+    debug_assert_eq!(found & satisfied, 0);
+
+    satisfied | found
+}
+
+fn mask_full(count: usize) -> u64 {
+    assert!(count > 0);
+    assert!(count <= PATTERN_COUNT_MAX);
+
+    u64::MAX >> (PATTERN_COUNT_MAX - count)
+}
+
+fn node_name<'source>(node: Node<'_>, source: &'source str) -> Option<&'source str> {
+    if let Some(name) = node.child_by_field_name("name") {
+        return name.utf8_text(source.as_bytes()).ok();
+    }
+
+    let mut cursor = node.walk();
+
+    let identifier = node
+        .children(&mut cursor)
+        .find(|child| IDENTIFIER_KINDS.contains(&child.kind()))?;
+
+    identifier.utf8_text(source.as_bytes()).ok()
+}
+
+pub fn symbol_matches(path: &Path, patterns: &[String], scratch: &mut SearchScratch) -> bool {
     if patterns.is_empty() {
         return true;
     }
 
-    let language = match Language::from_path(path) {
-        Some(l) => l,
-        None => return false,
+    let Some(language) = Language::from_path(path) else {
+        return false;
     };
 
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(_) => return false,
+    let Ok(content) = fs::read_to_string(path) else {
+        return false;
     };
 
-    let symbols = extract_symbol_names(&content, language);
+    let Some(tree) = scratch.parsers.parse(language, &content) else {
+        return false;
+    };
 
-    patterns.iter().all(|pattern| {
-        symbols.iter().any(|sym| sym.contains(pattern.as_str()))
-    })
-}
+    let full = mask_full(patterns.len());
+    let lowercase = &mut scratch.line;
+    let mut satisfied: u64 = 0;
 
-fn extract_symbol_names(content: &str, language: Language) -> Vec<String> {
-    with_parser(language, |parser| {
-        let tree = parser.parse(content, None)?;
-        let root = tree.root_node();
-        let mut names = Vec::new();
-
-        collect_symbol_names(root, content, language, &mut names);
-
-        Some(names)
-    })
-    .unwrap_or_default()
-}
-
-fn collect_symbol_names(
-    node: tree_sitter::Node,
-    source: &str,
-    language: Language,
-    names: &mut Vec<String>,
-) {
-    let kind = node.kind();
-
-    let is_definition = language.definition_types().contains(&kind)
-        || language.class_types().contains(&kind)
-        || language.constant_types().contains(&kind);
-
-    if is_definition {
-        if let Some(name) = extract_node_name(node, source) {
-            names.push(name.to_ascii_lowercase());
+    walk_subtree(tree.root_node(), |node| {
+        if satisfied == full {
+            return Visit::Stop;
         }
-    }
 
-    let mut cursor = node.walk();
-
-    for child in node.children(&mut cursor) {
-        collect_symbol_names(child, source, language, names);
-    }
-}
-
-fn extract_node_name(node: tree_sitter::Node, source: &str) -> Option<String> {
-    if let Some(name_node) = node.child_by_field_name("name") {
-        let text = &source[name_node.start_byte()..name_node.end_byte()];
-        return Some(text.to_string());
-    }
-
-    let mut cursor = node.walk();
-
-    for child in node.children(&mut cursor) {
-        let child_kind = child.kind();
-
-        if child_kind == "identifier"
-            || child_kind == "type_identifier"
-            || child_kind == "property_identifier"
-        {
-            let text = &source[child.start_byte()..child.end_byte()];
-            return Some(text.to_string());
+        if !is_definition(node.kind(), language) {
+            return Visit::Descend;
         }
-    }
 
-    None
-}
+        if let Some(name) = node_name(node, &content) {
+            lowercase.clear();
+            lowercase.push_str(name);
+            lowercase.make_ascii_lowercase();
 
-fn with_parser<F, R>(language: Language, f: F) -> Option<R>
-where
-    F: FnOnce(&mut Parser) -> Option<R>,
-{
-    PARSERS.with(|parsers| {
-        let mut map = parsers.borrow_mut();
-
-        let parser = map.entry(language).or_insert_with(|| {
-            let mut p = Parser::new();
-            let _ = p.set_language(&language.grammar());
-            p
-        });
-
-        f(parser)
-    })
-}
-
-fn escape_regex(pattern: &str) -> String {
-    let mut escaped = String::with_capacity(pattern.len() + 8);
-
-    for c in pattern.chars() {
-        if matches!(c, '\\' | '.' | '+' | '*' | '?' | '(' | ')' | '|' | '[' | ']' | '{' | '}' | '^' | '$') {
-            escaped.push('\\');
+            satisfied = mark_satisfied(patterns, lowercase, satisfied);
         }
-        escaped.push(c);
+
+        Visit::Descend
+    });
+
+    satisfied == full
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temporary_path(extension: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("swarm-search-{}.{extension}", uuid::Uuid::new_v4()))
     }
 
-    escaped
+    #[test]
+    fn an_empty_pattern_list_matches_everything() {
+        let matchers = ContentMatchers::new(&[]);
+        let mut scratch = SearchScratch::default();
+
+        assert!(matchers.is_empty());
+        assert!(content_matches(Path::new("/nonexistent"), &matchers, &mut scratch));
+    }
+
+    #[test]
+    fn regex_metacharacters_are_escaped() {
+        assert_eq!(escape_regex("a.b*c"), "a\\.b\\*c");
+        assert_eq!(escape_regex("a|b"), "a\\|b");
+        assert_eq!(escape_regex("plain"), "plain");
+    }
+
+    #[test]
+    fn satisfaction_tracking_counts_each_pattern_once() {
+        let patterns = vec!["alpha".to_owned(), "beta".to_owned()];
+        let full = mask_full(patterns.len());
+        let first = mark_satisfied(&patterns, "alpha alpha", 0);
+
+        assert_eq!(first, 0b01);
+
+        let second = mark_satisfied(&patterns, "beta", first);
+
+        assert_eq!(second, full);
+    }
+
+    #[test]
+    fn the_full_mask_covers_exactly_the_patterns() {
+        assert_eq!(mask_full(1), 0b1);
+        assert_eq!(mask_full(3), 0b111);
+        assert_eq!(mask_full(PATTERN_COUNT_MAX), u64::MAX);
+    }
+
+    #[test]
+    fn every_pattern_must_appear_somewhere_in_the_file() {
+        let path = temporary_path("txt");
+
+        fs::write(&path, "first line has Alpha\nsecond has beta\n")
+            .expect("the test file is writable");
+
+        let mut scratch = SearchScratch::default();
+        let both = ContentMatchers::new(&["alpha".to_owned(), "BETA".to_owned()]);
+        let missing = ContentMatchers::new(&["alpha".to_owned(), "gamma".to_owned()]);
+        let matched_both = content_matches(&path, &both, &mut scratch);
+        let matched_missing = content_matches(&path, &missing, &mut scratch);
+
+        fs::remove_file(&path).expect("the test file is removable");
+
+        assert!(matched_both);
+        assert!(!matched_missing);
+    }
+
+    #[test]
+    fn symbols_match_definition_names() {
+        let path = temporary_path("rs");
+
+        fs::write(&path, "struct Widget;\nfn render_widget() {}\n")
+            .expect("the test file is writable");
+
+        let mut scratch = SearchScratch::default();
+
+        let found = symbol_matches(
+            &path,
+            &["widget".to_owned(), "render".to_owned()],
+            &mut scratch,
+        );
+
+        let absent = symbol_matches(&path, &["missing".to_owned()], &mut scratch);
+
+        fs::remove_file(&path).expect("the test file is removable");
+
+        assert!(found);
+        assert!(!absent);
+    }
 }

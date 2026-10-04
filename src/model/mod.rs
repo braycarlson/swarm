@@ -1,13 +1,21 @@
 pub mod error;
+pub mod git;
+pub mod identifier;
+pub mod metadata;
 pub mod node;
 pub mod options;
 pub mod output;
 pub mod path;
 pub mod preset;
+pub mod query;
+pub mod selection;
+pub mod storage;
+pub mod theme;
+pub mod time;
 
 pub use error::{SwarmError, SwarmResult};
 pub use node::{FileNode, NodeKind};
 pub use options::Options;
 pub use output::OutputFormat;
-pub use path::PathExtensions;
 pub use preset::Preset;
+pub use theme::Theme;

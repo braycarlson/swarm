@@ -1,5 +1,4 @@
-use std::error::Error as StdError;
-use std::fmt;
+use core::fmt;
 use std::io;
 
 #[derive(Debug)]
@@ -7,25 +6,25 @@ pub enum SwarmError {
     Config(String),
     Io(io::Error),
     Json(serde_json::Error),
+    Other(String),
     Parse(String),
     Validation(String),
-    Other(String),
 }
 
 impl fmt::Display for SwarmError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Config(message) => write!(f, "Configuration error: {}", message),
-            Self::Io(error) => write!(f, "I/O error: {}", error),
-            Self::Json(error) => write!(f, "JSON error: {}", error),
-            Self::Parse(message) => write!(f, "Parsing error: {}", message),
-            Self::Validation(message) => write!(f, "Validation error: {}", message),
-            Self::Other(message) => write!(f, "Error: {}", message),
+            Self::Config(message) => write!(formatter, "Configuration error: {message}"),
+            Self::Io(error) => write!(formatter, "I/O error: {error}"),
+            Self::Json(error) => write!(formatter, "JSON error: {error}"),
+            Self::Other(message) => write!(formatter, "Error: {message}"),
+            Self::Parse(message) => write!(formatter, "Parsing error: {message}"),
+            Self::Validation(message) => write!(formatter, "Validation error: {message}"),
         }
     }
 }
 
-impl StdError for SwarmError {}
+impl core::error::Error for SwarmError {}
 
 impl From<io::Error> for SwarmError {
     fn from(error: io::Error) -> Self {

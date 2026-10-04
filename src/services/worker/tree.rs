@@ -1,159 +1,97 @@
-use std::sync::mpsc::Sender;
+use alloc::sync::Arc;
+use std::sync::mpsc::SyncSender;
 
 use crate::model::node::FileNode;
-use crate::model::options::Options;
-use crate::services::tree::traversal::Traversable;
+use crate::services::filesystem::filter::GlobPathFilter;
+use crate::services::tree::loader;
 
 use super::core::{Worker, WorkerTask};
 
-pub enum TreeLoadCommand {
-    Load(Vec<FileNode>, Options),
-    Stop,
+pub struct TreeRefreshRequest {
+    pub filter: Arc<GlobPathFilter>,
+    pub nodes: Vec<FileNode>,
+    pub session: String,
 }
 
-pub enum TreeLoadResult {
-    LoadedTree(Vec<FileNode>),
-    ProcessingPath(String),
-    CountUpdate(usize, usize),
-    Error(String),
+pub struct TreeRefreshResult {
+    pub failed: Vec<String>,
+    pub nodes: Vec<FileNode>,
+    pub session: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TreeLoadStatus {
-    NotStarted,
-    Loading,
-    Loaded,
-    Error,
-}
+struct TreeRefreshTask;
 
-enum NodeOutcome {
-    Visible(FileNode),
-    NotVisible(FileNode),
-}
+impl TreeRefreshTask {
+    fn refresh(nodes: Vec<FileNode>, filter: &GlobPathFilter) -> (Vec<FileNode>, Vec<String>) {
+        let roots_count = nodes.len();
+        let mut visible = Vec::with_capacity(nodes.len());
+        let mut hidden = Vec::new();
+        let mut failed = Vec::new();
 
-pub struct TreeLoadTask;
+        for mut node in nodes {
+            node.loaded = false;
 
-impl TreeLoadTask {
-    fn process_tree_load(
-        nodes: Vec<FileNode>,
-        options: Options,
-        result_sender: &Sender<TreeLoadResult>,
-    ) {
-        let mut visible: Vec<FileNode> = Vec::with_capacity(nodes.len());
-        let mut not_visible: Vec<FileNode> = Vec::new();
-        let mut processed_count: usize = 0;
-        let mut count_total = Self::calculate_initial_count(&nodes);
-
-        for node in nodes {
-            let process_result = Self::process_single_node(
-                node,
-                &options,
-                result_sender,
-                &mut processed_count,
-                &mut count_total,
-            );
-
-            match process_result {
-                Ok(NodeOutcome::Visible(n)) => visible.push(n),
-                Ok(NodeOutcome::NotVisible(n)) => not_visible.push(n),
+            match loader::load_children(&mut node, 0, filter) {
+                Ok(true) => visible.push(node),
+                Ok(false) => hidden.push(node),
                 Err(error) => {
-                    let _ = result_sender.send(TreeLoadResult::Error(error));
-                    return;
+                    failed.push(format!("{}: {error}", node.path.display()));
+                    visible.push(node);
                 }
             }
         }
 
         if visible.is_empty() {
-            visible = not_visible;
+            visible = hidden;
         }
 
-        let _ = result_sender.send(TreeLoadResult::LoadedTree(visible));
-    }
+        debug_assert!(visible.len() <= roots_count);
 
-    fn calculate_initial_count(nodes: &[FileNode]) -> usize {
-        nodes.iter()
-            .filter(|node| node.is_directory())
-            .count()
-    }
-
-    fn process_single_node(
-        mut node: FileNode,
-        options: &Options,
-        result_sender: &Sender<TreeLoadResult>,
-        processed_count: &mut usize,
-        count_total: &mut usize,
-    ) -> Result<NodeOutcome, String> {
-        if !node.is_directory() {
-            return Ok(NodeOutcome::NotVisible(node));
-        }
-
-        let refresh_result = node.refresh(options);
-
-        if let Err(error) = refresh_result {
-            return Err(format!("Error refreshing node {}: {}", node.path.display(), error));
-        }
-
-        let has_visible = refresh_result.unwrap();
-
-        if !has_visible {
-            return Ok(NodeOutcome::NotVisible(node));
-        }
-
-        let load_all_result = node.load_all_children(options);
-
-        if load_all_result.is_err() {
-            return Err(format!("Error loading node {}", node.path.display()));
-        }
-
-        let child_count = Self::walk_loaded_nodes(&node, result_sender, processed_count);
-        *count_total += child_count;
-
-        Ok(NodeOutcome::Visible(node))
-    }
-
-    fn walk_loaded_nodes(
-        node: &FileNode,
-        result_sender: &Sender<TreeLoadResult>,
-        processed_count: &mut usize,
-    ) -> usize {
-        let mut count: usize = 0;
-
-        for child in &node.children {
-            count += 1;
-            *processed_count += 1;
-
-            if *processed_count % 50 == 0 {
-                let string_path = child.path.to_string_lossy().into_owned();
-                let _ = result_sender.send(TreeLoadResult::ProcessingPath(string_path));
-                let _ = result_sender.send(TreeLoadResult::CountUpdate(*processed_count, count));
-            }
-
-            if child.is_directory() && child.loaded {
-                count += Self::walk_loaded_nodes(child, result_sender, processed_count);
-            }
-        }
-
-        count
+        (visible, failed)
     }
 }
 
-impl WorkerTask for TreeLoadTask {
-    type Command = TreeLoadCommand;
-    type Result = TreeLoadResult;
+impl WorkerTask for TreeRefreshTask {
+    type Command = Box<TreeRefreshRequest>;
+    type Result = TreeRefreshResult;
 
-    fn process(&mut self, command: Self::Command, result_sender: &Sender<Self::Result>) {
-        match command {
-            TreeLoadCommand::Load(nodes, options) => {
-                Self::process_tree_load(nodes, options, result_sender);
-            }
-            TreeLoadCommand::Stop => {}
-        }
+    fn process(&mut self, request: Self::Command, results: &SyncSender<Self::Result>) {
+        let TreeRefreshRequest {
+            filter,
+            nodes,
+            session,
+        } = *request;
+
+        let (refreshed, failed) = Self::refresh(nodes, &filter);
+
+        let _ = results.send(TreeRefreshResult {
+            failed,
+            nodes: refreshed,
+            session,
+        });
     }
 }
 
 pub struct TreeLoader {
-    status: TreeLoadStatus,
-    worker: Worker<TreeLoadTask>,
+    worker: Worker<TreeRefreshTask>,
+}
+
+impl TreeLoader {
+    pub fn check_results(&self) -> Option<TreeRefreshResult> {
+        self.worker.try_recv()
+    }
+
+    pub fn new() -> Self {
+        Self {
+            worker: Worker::spawn("tree-loader", TreeRefreshTask),
+        }
+    }
+
+    pub fn start(&self, request: Box<TreeRefreshRequest>) -> bool {
+        assert_ne!(request.session, "");
+
+        self.worker.send(request)
+    }
 }
 
 impl Default for TreeLoader {
@@ -162,35 +100,47 @@ impl Default for TreeLoader {
     }
 }
 
-impl TreeLoader {
-    pub fn new() -> Self {
-        let worker = Worker::spawn(TreeLoadTask);
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
 
-        Self {
-            status: TreeLoadStatus::NotStarted,
-            worker,
-        }
+    use super::*;
+    use crate::model::node::NodeKind;
+    use crate::model::options::Options;
+
+    #[test]
+    fn an_empty_root_is_kept_when_nothing_else_is_visible() {
+        let root = std::env::temp_dir().join(format!("swarm-refresh-{}", uuid::Uuid::new_v4()));
+
+        fs::create_dir_all(&root).expect("the test directory is creatable");
+
+        let filter =
+            GlobPathFilter::from_options(&Options::default()).expect("the defaults compile");
+
+        let nodes = vec![FileNode::with_kind(root.clone(), NodeKind::Directory)];
+        let (refreshed, failed) = TreeRefreshTask::refresh(nodes, &filter);
+
+        fs::remove_dir_all(&root).expect("the test directory is removable");
+
+        assert_eq!(refreshed.len(), 1);
+        assert_eq!(failed, Vec::<String>::new());
     }
 
-    pub fn check_results(&mut self) -> Option<TreeLoadResult> {
-        let result = self.worker.try_recv()?;
+    #[test]
+    fn a_vanished_root_is_kept_and_reported() {
+        let filter =
+            GlobPathFilter::from_options(&Options::default()).expect("the defaults compile");
 
-        let is_loaded_tree = matches!(result, TreeLoadResult::LoadedTree(_));
+        let nodes = vec![FileNode::with_kind(
+            PathBuf::from("/nonexistent/swarm/root"),
+            NodeKind::Directory,
+        )];
 
-        if is_loaded_tree {
-            self.status = TreeLoadStatus::Loaded;
-        }
+        let (refreshed, failed) = TreeRefreshTask::refresh(nodes, &filter);
 
-        Some(result)
-    }
-
-    pub fn start_load(&mut self, nodes: Vec<FileNode>, options: Options) -> bool {
-        self.status = TreeLoadStatus::Loading;
-
-        self.worker.send(TreeLoadCommand::Load(nodes, options))
-    }
-
-    pub fn status(&self) -> TreeLoadStatus {
-        self.status
+        assert_eq!(refreshed.len(), 1);
+        assert!(refreshed[0].load_failed);
+        assert_eq!(failed.len(), 1);
     }
 }

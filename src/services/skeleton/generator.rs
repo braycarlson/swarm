@@ -1,183 +1,44 @@
-use std::cell::RefCell;
-use std::fmt::Write;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use ignore::WalkBuilder;
-use rayon::prelude::*;
-use rustc_hash::FxHashMap;
-use tree_sitter::{Node, Parser};
+use rayon::iter::{IntoParallelRefIterator as _, ParallelIterator as _};
+use tree_sitter::Node;
 
-use crate::model::error::SwarmResult;
+use crate::constants::OUTPUT_BYTES_MAX;
+use crate::model::error::{SwarmError, SwarmResult};
+use crate::model::node::Visit;
 use crate::model::options::Options;
-use crate::services::filesystem::filter::{GlobPathFilter, PathFilter};
+use crate::model::output::{OutputEntry, OutputFormat};
+use crate::services::filesystem::filter::GlobPathFilter;
+use crate::services::filesystem::walk::{WalkOptions, walk_files};
+use crate::services::parser::{Parsers, walk_subtree};
+use crate::services::tokens::estimate_tokens;
 
 use super::language::Language;
 
-#[derive(Clone, Debug)]
-pub struct SkeletonStats {
-    pub files_count: usize,
-    pub line_count: usize,
-    pub token_count: usize,
+const BRACKETS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+const INDENT_DEPTH_MAX: u32 = 32;
+const INDENT_WIDTH: usize = 4;
+const INDENT_CACHE_BYTES: usize = INDENT_DEPTH_MAX as usize * INDENT_WIDTH;
+const INDENT_SPACES: [u8; INDENT_CACHE_BYTES] = [b' '; INDENT_CACHE_BYTES];
+const WRAPPER_LINE_KINDS: [&str; 2] = ["decorator", "export"];
+
+const INDENT_CACHE: &str = match core::str::from_utf8(&INDENT_SPACES) {
+    Ok(spaces) => spaces,
+    Err(_) => panic!("the indent cache holds ASCII spaces only"),
+};
+
+#[derive(Clone, Copy)]
+struct Document<'source> {
+    language: Language,
+    text: &'source str,
 }
 
-#[derive(Clone)]
-pub struct SkeletonGenerator;
-
-impl Default for SkeletonGenerator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-thread_local! {
-    static PARSERS: RefCell<FxHashMap<Language, Parser>> = RefCell::new(FxHashMap::default());
-}
-
-fn with_parser<F, R>(language: Language, f: F) -> Option<R>
-where
-    F: FnOnce(&mut Parser) -> Option<R>,
-{
-    PARSERS.with(|parsers| {
-        let mut map = parsers.borrow_mut();
-
-        let parser = map.entry(language).or_insert_with(|| {
-            let mut p = Parser::new();
-            let _ = p.set_language(&language.grammar());
-            p
-        });
-
-        f(parser)
-    })
-}
-
-impl SkeletonGenerator {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn generate(
-        &self,
-        paths: &[String],
-        options: &Options,
-    ) -> SwarmResult<(String, SkeletonStats)> {
-        let filter: Arc<dyn PathFilter> = Arc::new(GlobPathFilter::from_options(options)?);
-
-        let mut all_paths = Vec::new();
-
-        for string_path in paths {
-            let path = Path::new(string_path);
-
-            if path.is_dir() {
-                let walked = Self::walk_parallel(path, &filter);
-                all_paths.extend(walked);
-            } else if path.is_file() {
-                all_paths.push(path.to_path_buf());
-            }
-        }
-
-        let mut files: Vec<(String, String)> = all_paths
-            .par_iter()
-            .filter_map(|path| process_file(path))
-            .collect();
-
-        files.sort_by(|a, b| a.0.cmp(&b.0));
-
-        let approximate_capacity: usize = files.iter()
-            .map(|(p, s)| p.len() + s.len() + 4)
-            .sum();
-        let mut output = String::with_capacity(approximate_capacity);
-
-        for (path, skeleton) in &files {
-            let _ = writeln!(output, "[{}]", path);
-            output.push_str(skeleton);
-            output.push('\n');
-        }
-
-        let line_count = memchr::memchr_iter(b'\n', output.as_bytes()).count();
-
-        let stats = SkeletonStats {
-            files_count: files.len(),
-            line_count,
-            token_count: estimate_skeleton_tokens(&output),
-        };
-
-        Ok((output, stats))
-    }
-
-    fn walk_parallel(directory: &Path, filter: &Arc<dyn PathFilter>) -> Vec<PathBuf> {
-        let (sender, receiver) = std::sync::mpsc::channel::<PathBuf>();
-
-        WalkBuilder::new(directory)
-            .hidden(true)
-            .git_ignore(true)
-            .git_global(true)
-            .git_exclude(true)
-            .build_parallel()
-            .run(|| {
-                let sender = sender.clone();
-                let filter = Arc::clone(filter);
-                let mut local: Vec<PathBuf> = Vec::new();
-
-                Box::new(move |result| {
-                    match result {
-                        Ok(entry) => {
-                            if !filter.should_include(entry.path()) {
-                                if entry.file_type().is_some_and(|type_file| type_file.is_dir()) {
-                                    if !local.is_empty() {
-                                        for path in local.drain(..) {
-                                            let _ = sender.send(path);
-                                        }
-                                    }
-                                    return ignore::WalkState::Skip;
-                                }
-                                return ignore::WalkState::Continue;
-                            }
-
-                            if entry.file_type().is_some_and(|type_file| type_file.is_file()) {
-                                local.push(entry.into_path());
-
-                                if local.len() >= 64 {
-                                    for path in local.drain(..) {
-                                        let _ = sender.send(path);
-                                    }
-                                }
-                            }
-
-                            ignore::WalkState::Continue
-                        }
-                        Err(_) => ignore::WalkState::Continue,
-                    }
-                })
-            });
-
-        drop(sender);
-        receiver.iter().collect()
-    }
-}
-
-fn process_file(path: &Path) -> Option<(String, String)> {
-    let language = Language::from_path(path)?;
-    let content = fs::read_to_string(path).ok()?;
-    let skeleton = extract_skeleton(&content, language)?;
-
-    if skeleton.trim().is_empty() {
-        return None;
-    }
-
-    Some((path.display().to_string(), skeleton))
-}
-
-const INDENT_CACHE: &str = "                                                                                                                                ";
-
-fn indent(depth: usize) -> &'static str {
-    let end = (depth * 4).min(INDENT_CACHE.len());
-    &INDENT_CACHE[..end]
-}
-
-fn node_text<'a>(node: Node, source: &'a str) -> &'a str {
-    &source[node.start_byte()..node.end_byte()]
+enum FileOutcome {
+    Skeleton(OutputEntry),
+    Unreadable,
+    Unsupported,
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -189,23 +50,247 @@ enum NodeCategory {
     Wrapper,
 }
 
-fn classify_node(kind: &str, language: Language) -> Option<NodeCategory> {
-    if language.import_types().contains(&kind) {
-        Some(NodeCategory::Import)
-    } else if language.wrapper_types().contains(&kind) {
-        Some(NodeCategory::Wrapper)
-    } else if language.class_types().contains(&kind) {
-        Some(NodeCategory::Class)
-    } else if language.definition_types().contains(&kind) {
-        Some(NodeCategory::Definition)
-    } else if language.constant_types().contains(&kind) {
-        Some(NodeCategory::Constant)
-    } else {
-        None
-    }
+struct Replacement {
+    end: usize,
+    skeleton: String,
+    start: usize,
 }
 
-fn find_body<'a>(node: Node<'a>, language: Language) -> Option<Node<'a>> {
+pub struct SkeletonRequest<'request> {
+    pub format: OutputFormat,
+    pub options: &'request Options,
+    pub paths: &'request [PathBuf],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SkeletonStats {
+    pub files: u32,
+    pub lines: u64,
+    pub skipped: u32,
+    pub tokens: u64,
+}
+
+enum Work<'tree> {
+    Class { depth: u32, node: Node<'tree> },
+    ClassBody { body: Node<'tree>, depth: u32 },
+    Constant { depth: u32, node: Node<'tree> },
+    Definition { depth: u32, node: Node<'tree> },
+    Import { node: Node<'tree> },
+    Line(String),
+    Wrapper { depth: u32, node: Node<'tree> },
+}
+
+fn append_collapsed_assignment(output: &mut String, text: &str, depth: u32) {
+    let line_first = text.lines().next().unwrap_or("");
+
+    let bracketed = BRACKETS.iter().find_map(|(open, close)| {
+        line_first
+            .split_once(*open)
+            .map(|(before, _)| (before, *open, *close))
+    });
+
+    output.push_str(indent(depth));
+
+    if let Some((before, open, close)) = bracketed {
+        output.push_str(before);
+        output.push(open);
+        output.push_str("...");
+        output.push(close);
+    } else {
+        output.push_str(line_first.trim_end());
+        output.push_str(" ...");
+    }
+
+    output.push('\n');
+}
+
+fn child_depth(depth: u32) -> u32 {
+    let deeper = (depth + 1).min(INDENT_DEPTH_MAX);
+
+    debug_assert!(deeper >= depth);
+
+    deeper
+}
+
+fn children_reversed(node: Node<'_>) -> impl Iterator<Item = Node<'_>> {
+    let count = u32::try_from(node.child_count()).expect("tree-sitter counts children in u32");
+
+    (0..count).rev().filter_map(move |index| node.child(index))
+}
+
+fn classify_node(kind: &str, language: Language) -> Option<NodeCategory> {
+    let tables = [
+        (language.import_types(), NodeCategory::Import),
+        (language.wrapper_types(), NodeCategory::Wrapper),
+        (language.class_types(), NodeCategory::Class),
+        (language.definition_types(), NodeCategory::Definition),
+        (language.constant_types(), NodeCategory::Constant),
+    ];
+
+    tables
+        .iter()
+        .find(|(kinds, _)| kinds.contains(&kind))
+        .map(|(_, category)| *category)
+}
+
+fn collect_definition_skeletons(node: Node<'_>, document: Document<'_>) -> Vec<Replacement> {
+    let root_id = node.id();
+    let mut replacements = Vec::new();
+
+    walk_subtree(node, |current| {
+        if current.id() == root_id {
+            return Visit::Descend;
+        }
+
+        if !document
+            .language
+            .definition_types()
+            .contains(&current.kind())
+        {
+            if current.child_count() > 0 {
+                return Visit::Descend;
+            }
+
+            return Visit::Skip;
+        }
+
+        replacements.push(Replacement {
+            end: current.end_byte(),
+            skeleton: definition_skeleton(current, document),
+            start: current.start_byte(),
+        });
+
+        Visit::Skip
+    });
+
+    debug_assert!(replacements.is_sorted_by_key(|replacement| replacement.start));
+
+    replacements
+}
+
+fn definition_skeleton(node: Node<'_>, document: Document<'_>) -> String {
+    let Some(body) = find_body(node, document.language) else {
+        return node_text(node, document.text).to_owned();
+    };
+
+    format!(
+        "{}{}",
+        signature_text(node, body.start_byte(), document.text),
+        document.language.ellipsis(),
+    )
+}
+
+fn extract_class<'tree>(
+    output: &mut String,
+    work: &mut Vec<Work<'tree>>,
+    node: Node<'tree>,
+    document: Document<'tree>,
+    depth: u32,
+) {
+    let Some(body) = find_body(node, document.language) else {
+        write_indented_lines(output, node_text(node, document.text), depth);
+
+        return;
+    };
+
+    let indentation = indent(depth);
+    let signature = signature_text(node, body.start_byte(), document.text);
+    let depth_body = child_depth(depth);
+
+    if document.language == Language::Python {
+        write_line(output, &[indentation, signature]);
+
+        work.push(Work::ClassBody {
+            body,
+            depth: depth_body,
+        });
+
+        return;
+    }
+
+    if document.language == Language::Css {
+        if let Some(collapsed) = try_collapse_css_body(body, document) {
+            write_line(output, &[indentation, signature, " { ", &collapsed, " }"]);
+
+            return;
+        }
+    }
+
+    write_line(output, &[indentation, signature, " {"]);
+
+    work.push(Work::Line(format!("{indentation}}}")));
+    work.push(Work::ClassBody {
+        body,
+        depth: depth_body,
+    });
+}
+
+fn extract_constant(output: &mut String, node: Node<'_>, document: Document<'_>, depth: u32) {
+    let replacements = collect_definition_skeletons(node, document);
+
+    if !replacements.is_empty() {
+        write_with_replacements(output, node, &replacements, document, depth);
+
+        return;
+    }
+
+    let text = node_text(node, document.text);
+
+    if text.lines().nth(1).is_some() {
+        append_collapsed_assignment(output, text, depth);
+
+        return;
+    }
+
+    write_line(output, &[indent(depth), text.lines().next().unwrap_or("")]);
+}
+
+fn extract_definition(output: &mut String, node: Node<'_>, document: Document<'_>, depth: u32) {
+    let Some(body) = find_body(node, document.language) else {
+        write_indented_lines(output, node_text(node, document.text), depth);
+
+        return;
+    };
+
+    let signature = signature_text(node, body.start_byte(), document.text);
+
+    write_lines(output, signature, depth, document.language.ellipsis());
+}
+
+fn extract_skeleton(text: &str, language: Language, parsers: &mut Parsers) -> Option<String> {
+    let tree = parsers.parse(language, text)?;
+    let root = tree.root_node();
+    let document = Document { language, text };
+    let work_count_max = 2 * root.descendant_count() + 1;
+    let mut output = String::new();
+    let mut work: Vec<Work<'_>> = Vec::new();
+
+    for child in children_reversed(root) {
+        if let Some(category) = classify_node(child.kind(), language) {
+            work.push(work_for(category, child, 0));
+        }
+    }
+
+    while let Some(item) = work.pop() {
+        assert!(work.len() < work_count_max);
+
+        process_work(item, &mut output, &mut work, document);
+    }
+
+    let output_length_trimmed = output.trim_end().len();
+
+    output.truncate(output_length_trimmed);
+
+    if output.is_empty() {
+        return None;
+    }
+
+    output.push('\n');
+
+    Some(output)
+}
+
+fn find_body(node: Node<'_>, language: Language) -> Option<Node<'_>> {
     if let Some(body) = node.child_by_field_name(language.body_field()) {
         return Some(body);
     }
@@ -218,374 +303,481 @@ fn find_body<'a>(node: Node<'a>, language: Language) -> Option<Node<'a>> {
 
     let mut cursor = node.walk();
 
-    for child in node.children(&mut cursor) {
-        if kinds.contains(&child.kind()) {
-            return Some(child);
+    node.children(&mut cursor)
+        .find(|child| kinds.contains(&child.kind()))
+}
+
+pub fn generate(request: &SkeletonRequest<'_>) -> SwarmResult<(String, SkeletonStats)> {
+    let filter = GlobPathFilter::from_options(request.options)?;
+    let candidates = paths_for(request.paths, &filter)?;
+
+    let outcomes: Vec<FileOutcome> = candidates
+        .par_iter()
+        .map_init(Parsers::default, |parsers, path| {
+            process_file(path, parsers)
+        })
+        .collect();
+
+    assert_eq!(outcomes.len(), candidates.len());
+
+    let mut entries = Vec::with_capacity(outcomes.len());
+    let mut skipped: u32 = 0;
+
+    for outcome in outcomes {
+        match outcome {
+            FileOutcome::Skeleton(entry) => entries.push(entry),
+            FileOutcome::Unreadable => skipped += 1,
+            FileOutcome::Unsupported => {}
         }
     }
 
-    None
-}
+    entries.sort_by(|left, right| left.label.cmp(&right.label));
 
-fn extract_skeleton(content: &str, language: Language) -> Option<String> {
-    with_parser(language, |parser| {
-        let tree = parser.parse(content, None)?;
-        let root = tree.root_node();
-        let mut output = String::new();
-        let mut cursor = root.walk();
+    let output = request.format.format(&entries)?;
 
-        for child in root.children(&mut cursor) {
-            let kind = child.kind();
-
-            match classify_node(kind, language) {
-                Some(NodeCategory::Import) => {
-                    extract_import(&mut output, child, content);
-                }
-                Some(NodeCategory::Definition) => {
-                    extract_definition(&mut output, child, content, language, 0);
-                }
-                Some(NodeCategory::Class) => {
-                    extract_class(&mut output, child, content, language, 0);
-                }
-                Some(NodeCategory::Constant) => {
-                    extract_constant(&mut output, child, content, language, 0);
-                }
-                Some(NodeCategory::Wrapper) => {
-                    extract_wrapper(&mut output, child, content, language, 0);
-                }
-                None => {}
-            }
-        }
-
-        let new_length = output.trim_end().len();
-        output.truncate(new_length);
-
-        if output.is_empty() {
-            return None;
-        }
-
-        output.push('\n');
-        Some(output)
-    })
-}
-
-fn extract_import(output: &mut String, node: Node, source: &str) {
-    let text = node_text(node, source);
-    let _ = writeln!(output, "{}", text);
-}
-
-fn extract_definition(
-    output: &mut String,
-    node: Node,
-    source: &str,
-    language: Language,
-    depth: usize,
-) {
-    let indentation = indent(depth);
-
-    if let Some(body) = find_body(node, language) {
-        let signature = source[node.start_byte()..body.start_byte()].trim_end();
-
-        for line in signature.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let _ = writeln!(output, "{}{}", indentation, line);
-        }
-
-        let _ = writeln!(output, "{}{}", indentation, language.ellipsis());
-    } else {
-        let text = node_text(node, source);
-
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let _ = writeln!(output, "{}{}", indentation, line);
-        }
-    }
-}
-
-fn extract_class(
-    output: &mut String,
-    node: Node,
-    source: &str,
-    language: Language,
-    depth: usize,
-) {
-    let indentation = indent(depth);
-
-    if let Some(body) = find_body(node, language) {
-        let signature = source[node.start_byte()..body.start_byte()].trim_end();
-
-        match language {
-            Language::Python => {
-                let _ = writeln!(output, "{}{}", indentation, signature);
-                extract_class_body(output, body, source, language, depth + 1);
-            }
-            Language::Css => {
-                if let Some(collapsed) = try_collapse_css_body(body, source, language) {
-                    let _ = writeln!(output, "{}{} {{ {} }}", indentation, signature, collapsed);
-                } else {
-                    let _ = writeln!(output, "{}{} {{", indentation, signature);
-                    extract_class_body(output, body, source, language, depth + 1);
-                    let _ = writeln!(output, "{}}}", indentation);
-                }
-            }
-            _ => {
-                let _ = writeln!(output, "{}{} {{", indentation, signature);
-                extract_class_body(output, body, source, language, depth + 1);
-                let _ = writeln!(output, "{}}}", indentation);
-            }
-        }
-    } else {
-        let text = node_text(node, source);
-
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            let _ = writeln!(output, "{}{}", indentation, line);
-        }
-    }
-}
-
-fn try_collapse_css_body(body: Node, source: &str, language: Language) -> Option<String> {
-    if !matches!(language, Language::Css) {
-        return None;
+    if output.len() as u64 > OUTPUT_BYTES_MAX {
+        return Err(SwarmError::Validation(format!(
+            "the skeleton holds more than {OUTPUT_BYTES_MAX} bytes; narrow the selection",
+        )));
     }
 
-    let mut cursor = body.walk();
-    let mut matching_iter = body.children(&mut cursor)
-        .filter(|child| {
-            let kind = child.kind();
-            language.definition_types().contains(&kind)
-                || language.class_types().contains(&kind)
-        });
+    let stats = SkeletonStats {
+        files: u32::try_from(entries.len()).expect("the walk bounds the file count"),
+        lines: memchr::memchr_iter(b'\n', output.as_bytes()).count() as u64,
+        skipped,
+        tokens: estimate_tokens(&output),
+    };
 
-    let first = matching_iter.next()?;
+    Ok((output, stats))
+}
 
-    if matching_iter.next().is_some() {
-        return None;
-    }
+fn indent(depth: u32) -> &'static str {
+    debug_assert!(depth <= INDENT_DEPTH_MAX);
 
-    let child = first;
-    let kind = child.kind();
+    let end = (depth as usize * INDENT_WIDTH).min(INDENT_CACHE.len());
+
+    INDENT_CACHE.get(..end).unwrap_or("")
+}
+
+fn member_work(node: Node<'_>, depth: u32, language: Language) -> Option<Work<'_>> {
+    let kind = node.kind();
 
     if language.definition_types().contains(&kind) {
-        if let Some(body) = find_body(child, language) {
-            let signature = source[child.start_byte()..body.start_byte()].trim_end();
-            return Some(format!("{}{}", signature, language.ellipsis()));
-        }
+        return Some(Work::Definition { depth, node });
     }
 
     if language.class_types().contains(&kind) {
-        if let Some(child_body) = find_body(child, language) {
-            let signature = source[child.start_byte()..child_body.start_byte()].trim_end();
+        return Some(Work::Class { depth, node });
+    }
 
-            if let Some(collapsed) = try_collapse_css_body(child_body, source, language) {
-                return Some(format!("{} {{ {} }}", signature, collapsed));
-            }
-        }
+    if language.wrapper_types().contains(&kind) {
+        return Some(Work::Wrapper { depth, node });
     }
 
     None
 }
 
-fn extract_class_body(
-    output: &mut String,
-    body: Node,
-    source: &str,
-    language: Language,
-    depth: usize,
-) {
-    let indentation = indent(depth);
-    let mut cursor = body.walk();
+fn node_text<'source>(node: Node<'_>, source: &'source str) -> &'source str {
+    debug_assert!(node.start_byte() <= node.end_byte());
+    debug_assert!(node.end_byte() <= source.len());
 
-    let has_skeleton_content = body.children(&mut cursor).any(|child| {
-        let kind = child.kind();
-        language.definition_types().contains(&kind)
-            || language.class_types().contains(&kind)
-            || language.wrapper_types().contains(&kind)
-    });
-
-    if !has_skeleton_content {
-        let _ = writeln!(output, "{}...", indentation);
-        return;
-    }
-
-    let mut cursor2 = body.walk();
-
-    for child in body.children(&mut cursor2) {
-        let kind = child.kind();
-
-        if language.definition_types().contains(&kind) {
-            extract_definition(output, child, source, language, depth);
-        } else if language.class_types().contains(&kind) {
-            extract_class(output, child, source, language, depth);
-        } else if language.wrapper_types().contains(&kind) {
-            extract_wrapper(output, child, source, language, depth);
-        }
-    }
+    node.utf8_text(source.as_bytes()).unwrap_or("")
 }
 
-fn extract_wrapper(
-    output: &mut String,
-    node: Node,
-    source: &str,
-    language: Language,
-    depth: usize,
-) {
-    let indentation = indent(depth);
-    let mut cursor = node.walk();
+fn paths_for(paths: &[PathBuf], filter: &GlobPathFilter) -> SwarmResult<Vec<PathBuf>> {
+    let mut candidates = Vec::with_capacity(paths.len());
 
-    for child in node.children(&mut cursor) {
-        let kind = child.kind();
+    for path in paths {
+        let Ok(metadata) = fs::metadata(path) else {
+            continue;
+        };
 
-        if kind == "decorator" || kind == "export" {
-            let text = node_text(child, source);
-            let _ = writeln!(output, "{}{}", indentation, text);
-        } else if language.definition_types().contains(&kind) {
-            extract_definition(output, child, source, language, depth);
-        } else if language.class_types().contains(&kind) {
-            extract_class(output, child, source, language, depth);
-        } else if language.wrapper_types().contains(&kind) {
-            extract_wrapper(output, child, source, language, depth);
-        }
-    }
-}
+        if metadata.is_dir() {
+            candidates.extend(walk_files(path, filter, WalkOptions::SKELETON)?);
 
-fn extract_constant(
-    output: &mut String,
-    node: Node,
-    source: &str,
-    language: Language,
-    depth: usize,
-) {
-    if has_nested_definitions(node, language) {
-        extract_constant_with_definitions(output, node, source, language, depth);
-        return;
-    }
-
-    let indentation = indent(depth);
-    let text = node_text(node, source);
-    let first_line = text.lines().next().unwrap_or("");
-
-    if text.lines().count() > 1 {
-        append_collapsed_assignment(output, node, source, depth);
-    } else {
-        let _ = writeln!(output, "{}{}", indentation, first_line);
-    }
-}
-
-fn has_nested_definitions(node: Node, language: Language) -> bool {
-    let mut cursor = node.walk();
-
-    for child in node.children(&mut cursor) {
-        let kind = child.kind();
-
-        if language.definition_types().contains(&kind) {
-            return true;
-        }
-
-        if child.child_count() > 0 && has_nested_definitions(child, language) {
-            return true;
-        }
-    }
-
-    false
-}
-
-fn extract_constant_with_definitions(
-    output: &mut String,
-    node: Node,
-    source: &str,
-    language: Language,
-    depth: usize,
-) {
-    let indentation = indent(depth);
-    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
-
-    collect_definition_skeletons(node, source, language, &mut replacements);
-    replacements.sort_by_key(|r| r.0);
-
-    let node_start = node.start_byte();
-    let node_end = node.end_byte();
-    let mut result = String::new();
-    let mut position = node_start;
-
-    for (start, end, skeleton) in &replacements {
-        result.push_str(&source[position..*start]);
-        result.push_str(skeleton);
-        position = *end;
-    }
-
-    result.push_str(&source[position..node_end]);
-
-    for line in result.lines() {
-        if line.trim().is_empty() {
             continue;
         }
 
-        let _ = writeln!(output, "{}{}", indentation, line);
+        if metadata.is_file() {
+            candidates.push(path.clone());
+        }
+    }
+
+    Ok(candidates)
+}
+
+fn process_file(path: &Path, parsers: &mut Parsers) -> FileOutcome {
+    let Some(language) = Language::from_path(path) else {
+        return FileOutcome::Unsupported;
+    };
+
+    let Some(text) = read_bounded(path) else {
+        return FileOutcome::Unreadable;
+    };
+
+    let Some(skeleton) = extract_skeleton(&text, language, parsers) else {
+        return FileOutcome::Unsupported;
+    };
+
+    if skeleton.trim().is_empty() {
+        return FileOutcome::Unsupported;
+    }
+
+    FileOutcome::Skeleton(OutputEntry {
+        content: skeleton,
+        label: path.display().to_string(),
+    })
+}
+
+fn process_work<'tree>(
+    item: Work<'tree>,
+    output: &mut String,
+    work: &mut Vec<Work<'tree>>,
+    document: Document<'tree>,
+) {
+    match item {
+        Work::Class { depth, node } => extract_class(output, work, node, document, depth),
+        Work::ClassBody { body, depth } => queue_class_body(output, work, body, document, depth),
+        Work::Constant { depth, node } => extract_constant(output, node, document, depth),
+        Work::Definition { depth, node } => extract_definition(output, node, document, depth),
+        Work::Import { node } => write_line(output, &[node_text(node, document.text)]),
+        Work::Line(line) => write_line(output, &[&line]),
+        Work::Wrapper { depth, node } => queue_wrapper(work, node, document, depth),
     }
 }
 
-fn collect_definition_skeletons(
-    node: Node,
-    source: &str,
-    language: Language,
-    skeletons: &mut Vec<(usize, usize, String)>,
+fn queue_class_body<'tree>(
+    output: &mut String,
+    work: &mut Vec<Work<'tree>>,
+    body: Node<'tree>,
+    document: Document<'tree>,
+    depth: u32,
 ) {
-    let mut cursor = node.walk();
+    let mut cursor = body.walk();
 
-    for child in node.children(&mut cursor) {
-        let kind = child.kind();
+    let has_content = body
+        .children(&mut cursor)
+        .any(|child| member_work(child, depth, document.language).is_some());
 
-        if language.definition_types().contains(&kind) {
-            let skeleton = build_definition_skeleton(child, source, language);
-            skeletons.push((child.start_byte(), child.end_byte(), skeleton));
-        } else if child.child_count() > 0 {
-            collect_definition_skeletons(child, source, language, skeletons);
+    if !has_content {
+        write_line(output, &[indent(depth), "..."]);
+
+        return;
+    }
+
+    let work_length_before = work.len();
+
+    work.extend(
+        children_reversed(body).filter_map(|child| member_work(child, depth, document.language)),
+    );
+
+    debug_assert!(work.len() > work_length_before);
+}
+
+fn queue_wrapper<'tree>(
+    work: &mut Vec<Work<'tree>>,
+    node: Node<'tree>,
+    document: Document<'tree>,
+    depth: u32,
+) {
+    for child in children_reversed(node) {
+        if WRAPPER_LINE_KINDS.contains(&child.kind()) {
+            work.push(Work::Line(format!(
+                "{}{}",
+                indent(depth),
+                node_text(child, document.text),
+            )));
+
+            continue;
+        }
+
+        if let Some(item) = member_work(child, depth, document.language) {
+            work.push(item);
         }
     }
 }
 
-fn build_definition_skeleton(node: Node, source: &str, language: Language) -> String {
-    if let Some(body) = find_body(node, language) {
-        let signature = source[node.start_byte()..body.start_byte()].trim_end();
+fn read_bounded(path: &Path) -> Option<String> {
+    let metadata = fs::symlink_metadata(path).ok()?;
 
-        format!("{}{}", signature, language.ellipsis())
-    } else {
-        node_text(node, source).to_string()
+    if !metadata.is_file() {
+        return None;
+    }
+
+    let size_bytes = metadata.len();
+
+    if size_bytes > OUTPUT_BYTES_MAX {
+        return None;
+    }
+
+    let file = File::open(path).ok()?;
+    let capacity = usize::try_from(size_bytes).ok()?;
+    let mut text = String::with_capacity(capacity);
+
+    file.take(size_bytes).read_to_string(&mut text).ok()?;
+
+    Some(text)
+}
+
+fn signature_text<'source>(
+    node: Node<'_>,
+    body_start: usize,
+    source: &'source str,
+) -> &'source str {
+    debug_assert!(node.start_byte() <= body_start);
+    debug_assert!(body_start <= source.len());
+
+    source
+        .get(node.start_byte()..body_start)
+        .unwrap_or("")
+        .trim_end()
+}
+
+fn single_skeleton_child(body: Node<'_>, language: Language) -> Option<Node<'_>> {
+    let mut cursor = body.walk();
+
+    let mut matching = body.children(&mut cursor).filter(|child| {
+        let kind = child.kind();
+
+        language.definition_types().contains(&kind) || language.class_types().contains(&kind)
+    });
+
+    let first = matching.next()?;
+
+    if matching.next().is_some() {
+        return None;
+    }
+
+    Some(first)
+}
+
+fn try_collapse_css_body(body: Node<'_>, document: Document<'_>) -> Option<String> {
+    debug_assert_eq!(document.language, Language::Css);
+
+    let language = document.language;
+    let mut signatures: Vec<&str> = Vec::new();
+    let mut current = body;
+
+    for _ in 0..INDENT_DEPTH_MAX {
+        let child = single_skeleton_child(current, language)?;
+        let kind = child.kind();
+        let child_body = find_body(child, language)?;
+        let signature = signature_text(child, child_body.start_byte(), document.text);
+
+        if language.definition_types().contains(&kind) {
+            let mut collapsed = format!("{signature}{}", language.ellipsis());
+
+            for wrapper in signatures.iter().rev() {
+                collapsed = format!("{wrapper} {{ {collapsed} }}");
+            }
+
+            return Some(collapsed);
+        }
+
+        if !language.class_types().contains(&kind) {
+            return None;
+        }
+
+        signatures.push(signature);
+        current = child_body;
+    }
+
+    None
+}
+
+fn work_for(category: NodeCategory, node: Node<'_>, depth: u32) -> Work<'_> {
+    match category {
+        NodeCategory::Class => Work::Class { depth, node },
+        NodeCategory::Constant => Work::Constant { depth, node },
+        NodeCategory::Definition => Work::Definition { depth, node },
+        NodeCategory::Import => Work::Import { node },
+        NodeCategory::Wrapper => Work::Wrapper { depth, node },
     }
 }
 
-fn append_collapsed_assignment(
-    output: &mut String,
-    node: Node,
-    source: &str,
-    depth: usize,
-) {
+fn write_indented_lines(output: &mut String, text: &str, depth: u32) {
+    write_lines(output, text, depth, "");
+}
+
+fn write_line(output: &mut String, parts: &[&str]) {
+    for part in parts {
+        output.push_str(part);
+    }
+
+    output.push('\n');
+}
+
+fn write_lines(output: &mut String, text: &str, depth: u32, suffix: &'static str) {
     let indentation = indent(depth);
-    let text = node_text(node, source);
-    let first_line = text.lines().next().unwrap_or("");
+    let mut pending: Option<&str> = None;
 
-    if let Some(parenthesis_position) = first_line.find('(') {
-        let _ = writeln!(output, "{}{}...)", indentation, &first_line[..parenthesis_position + 1]);
-    } else if let Some(bracket_position) = first_line.find('[') {
-        let _ = writeln!(output, "{}{}...]", indentation, &first_line[..bracket_position + 1]);
-    } else if let Some(brace_position) = first_line.find('{') {
-        let _ = writeln!(output, "{}{}...}}", indentation, &first_line[..brace_position + 1]);
-    } else {
-        let _ = writeln!(output, "{}{} ...", indentation, first_line.trim_end());
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        if let Some(previous) = pending {
+            write_line(output, &[indentation, previous]);
+        }
+
+        pending = Some(line);
+    }
+
+    if let Some(last) = pending {
+        write_line(output, &[indentation, last, suffix]);
+
+        return;
+    }
+
+    if !suffix.is_empty() {
+        write_line(output, &[indentation, suffix]);
     }
 }
 
-fn estimate_skeleton_tokens(text: &str) -> usize {
-    let byte_count = text.len();
-    (byte_count * 2 + 6) / 7
+fn write_with_replacements(
+    output: &mut String,
+    node: Node<'_>,
+    replacements: &[Replacement],
+    document: Document<'_>,
+    depth: u32,
+) {
+    let node_end = node.end_byte();
+    let mut position = node.start_byte();
+    let mut result = String::new();
+
+    for replacement in replacements {
+        assert!(replacement.start >= position);
+        assert!(replacement.end <= node_end);
+        assert!(replacement.start <= replacement.end);
+
+        result.push_str(document.text.get(position..replacement.start).unwrap_or(""));
+        result.push_str(&replacement.skeleton);
+        position = replacement.end;
+    }
+
+    result.push_str(document.text.get(position..node_end).unwrap_or(""));
+
+    write_indented_lines(output, &result, depth);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn skeleton(source: &str, language: Language) -> Option<String> {
+        extract_skeleton(source, language, &mut Parsers::default())
+    }
+
+    #[test]
+    fn rust_skeleton_keeps_signatures_and_drops_bodies() {
+        let output = skeleton(
+            "use std::fmt;\n\nfn add(a: u32, b: u32) -> u32 {\n    a + b\n}\n",
+            Language::Rust,
+        )
+        .expect("the source has a skeleton");
+
+        assert!(output.contains("use std::fmt;"));
+        assert!(output.contains("fn add(a: u32, b: u32) -> u32 { ... }"));
+        assert!(!output.contains("a + b"));
+    }
+
+    #[test]
+    fn a_definition_ellipsis_stays_on_the_signature_line() {
+        let output = skeleton(
+            "fn wide(\n    a: u32,\n    b: u32,\n) -> u32 {\n    a + b\n}\n",
+            Language::Rust,
+        )
+        .expect("the source has a skeleton");
+
+        assert!(output.contains(") -> u32 { ... }"));
+        assert!(!output.lines().any(|line| line.trim() == "{ ... }"));
+    }
+
+    #[test]
+    fn nested_impl_blocks_keep_their_order() {
+        let output = skeleton(
+            "impl Thing {\n    fn one(&self) {}\n    fn two(&self) {}\n}\n",
+            Language::Rust,
+        )
+        .expect("the source has a skeleton");
+
+        let one = output.find("fn one").expect("the first method is present");
+        let two = output.find("fn two").expect("the second method is present");
+
+        assert!(one < two);
+        assert!(output.trim_end().ends_with('}'));
+    }
+
+    #[test]
+    fn python_class_bodies_are_indented() {
+        let output = skeleton(
+            "class Thing:\n    def one(self):\n        pass\n",
+            Language::Python,
+        )
+        .expect("the source has a skeleton");
+
+        assert!(output.contains("class Thing:"));
+        assert!(output.contains("    def one(self): ..."));
+        assert!(!output.contains("pass"));
+    }
+
+    #[test]
+    fn an_empty_source_yields_no_skeleton() {
+        assert!(skeleton("", Language::Rust).is_none());
+    }
+
+    #[test]
+    fn constants_with_closures_keep_only_the_signature() {
+        let output = skeleton(
+            "const handler = (value) => {\n    return value;\n};\n",
+            Language::JavaScript,
+        )
+        .expect("the source has a skeleton");
+
+        assert!(output.contains("(value) => { ... }"));
+        assert!(!output.contains("return value"));
+    }
+
+    #[test]
+    fn deeply_nested_css_does_not_panic() {
+        let depth = INDENT_DEPTH_MAX as usize + 8;
+        let opening = "@media screen { ".repeat(depth);
+        let closing = " }".repeat(depth);
+        let source = format!("{opening}a {{ color: red; }}{closing}");
+        let output = skeleton(&source, Language::Css).expect("the source has a skeleton");
+
+        assert!(output.starts_with("@media"));
+    }
+
+    #[test]
+    fn deeply_nested_python_classes_do_not_panic() {
+        let depth = INDENT_DEPTH_MAX as usize + 8;
+        let mut source = String::new();
+
+        for level in 0..depth {
+            source.push_str(&"    ".repeat(level));
+            source.push_str("class Level");
+            source.push_str(&level.to_string());
+            source.push_str(":\n");
+        }
+
+        source.push_str(&"    ".repeat(depth));
+        source.push_str("pass\n");
+
+        let output = skeleton(&source, Language::Python).expect("the source has a skeleton");
+
+        assert!(output.contains("class Level0:"));
+    }
+
+    #[test]
+    fn indentation_is_clamped() {
+        assert_eq!(indent(0), "");
+        assert_eq!(indent(1).len(), INDENT_WIDTH);
+        assert_eq!(indent(INDENT_DEPTH_MAX).len(), INDENT_DEPTH_MAX as usize * INDENT_WIDTH);
+    }
+
+    #[test]
+    fn multi_line_assignments_collapse_at_the_first_bracket() {
+        let mut output = String::new();
+
+        append_collapsed_assignment(&mut output, "VALUES = [\n    1,\n]", 0);
+
+        assert_eq!(output, "VALUES = [...]\n");
+    }
 }

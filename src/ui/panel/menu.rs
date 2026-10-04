@@ -1,139 +1,50 @@
-use std::sync::mpsc::Sender;
-use std::thread;
-
 use eframe::egui;
-use rfd::FileDialog;
 
-use crate::app::message::{App, Message, Options_, Preset_, Session};
-use crate::app::state::{Model, UiState};
+use crate::app::handler::common::SESSION_NAME_DEFAULT;
+use crate::app::message::{App, Message, MessageSender, OptionsMessage, PresetMessage, Session};
+use crate::app::state::{Model, SessionData, UiState};
 use crate::constants::APP_NAME;
+use crate::ui::widget::window::focus_if_pending;
 
-pub fn render(
-    ui: &mut egui::Ui,
-    model: &Model,
-    ui_state: &UiState,
-    sender: &Sender<Message>,
-) {
+const SESSION_NAME_WIDTH_PIXELS: f32 = 75.0;
+const TAB_STRIP_HEIGHT_PIXELS: f32 = 28.0;
+
+fn new_session_message() -> Message {
+    Message::Session(Session::Created(SESSION_NAME_DEFAULT.to_owned()))
+}
+
+pub fn render(ui: &mut egui::Ui, model: &Model, ui_state: &mut UiState, sender: &MessageSender) {
     egui::Panel::top("top_panel")
         .min_size(60.0)
         .resizable(false)
-        .show_inside(ui, |ui| {
-            egui::MenuBar::new().ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
-                    let can_open = true;
-
-                    if ui.add_enabled(can_open, egui::Button::new("Open")).clicked() {
-                        ui.close();
-                        open_file_dialog(sender);
-                    }
-
-                    let has_tree = !model.tree.nodes.is_empty();
-
-                    if ui.add_enabled(has_tree, egui::Button::new("Open in Explorer")).clicked() {
-                        sender.send(Message::App(App::OpenInExplorer)).ok();
-                        ui.close();
-                    }
-
-                    ui.separator();
-
-                    if ui.button("New Session").clicked() {
-                        sender.send(Message::Session(Session::Created("Session".to_string()))).ok();
-                        ui.close();
-                    }
-
-                    let has_restorable = model.sessions.has_restorable_session();
-
-                    if ui.add_enabled(has_restorable, egui::Button::new("Restore Last Session")).clicked() {
-                        sender.send(Message::App(App::RestoreLastSession)).ok();
-                        ui.close();
-                    }
-
-                    ui.separator();
-
-                    if ui.add_enabled(has_tree, egui::Button::new("Save Preset")).clicked() {
-                        sender.send(Message::Preset(Preset_::SaveDialogOpened)).ok();
-                        ui.close();
-                    }
-
-                    let has_presets = !model.presets.presets.is_empty();
-
-                    if ui.add_enabled(has_presets, egui::Button::new("Load Preset")).clicked() {
-                        sender.send(Message::Preset(Preset_::LoadDialogOpened)).ok();
-                        ui.close();
-                    }
-
-                    ui.separator();
-
-                    if ui.button("Exit").clicked() {
-                        ui.close();
-                        std::process::exit(0);
-                    }
-                });
-
-                ui.menu_button("Edit", |ui| {
-                    if ui.button("Options").clicked() {
-                        sender.send(Message::Options(Options_::Opened)).ok();
-                        ui.close();
-                    }
-                });
-
-                ui.menu_button("About", |ui| {
-                    if ui.button(format!("About {}", APP_NAME)).clicked() {
-                        sender.send(Message::App(App::AboutOpened)).ok();
-                        ui.close();
-                    }
-                });
+        .show_inside(ui, |panel| {
+            egui::MenuBar::new().ui(panel, |bar| {
+                render_file_menu(bar, model, ui_state, sender);
+                render_edit_menu(bar, sender);
+                render_about_menu(bar, sender);
             });
 
-            ui.separator();
-            ui.add_space(10.0);
+            panel.separator();
+            panel.add_space(10.0);
 
-            render_session_tabs(ui, model, ui_state, sender);
+            render_session_tabs(panel, model, ui_state, sender);
         });
 }
 
-fn render_session_tabs(
-    ui: &mut egui::Ui,
-    model: &Model,
-    ui_state: &UiState,
-    sender: &Sender<Message>,
-) {
-    let mut sessions: Vec<_> = model.sessions.sessions.iter().collect();
-    sessions.sort_by_key(|(_, s)| s.created_at);
-
-    let available_width = ui.available_width();
-
-    let (rectangle, response) = ui.allocate_exact_size(
-        egui::vec2(available_width, 28.0),
-        egui::Sense::click(),
-    );
-
-    let mut child_ui = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(rectangle)
-            .layout(egui::Layout::left_to_right(egui::Align::Center))
-    );
-
-    child_ui.spacing_mut().item_spacing.x = 2.0;
-
-    for (identifier, session) in sessions {
-        if Some(identifier.clone()) == ui_state.session_editing {
-            render_edit_tab(&mut child_ui, identifier, ui_state, sender);
-        } else {
-            render_tab_label(&mut child_ui, identifier, session, model, sender);
+fn render_about_menu(ui: &mut egui::Ui, sender: &MessageSender) {
+    ui.menu_button("About", |menu| {
+        if menu.button(format!("About {APP_NAME}")).clicked() {
+            sender.send(Message::App(App::AboutOpened));
+            menu.close();
         }
+    });
+}
 
-        child_ui.separator();
-    }
-
-    if response.double_clicked() {
-        sender.send(Message::Session(Session::Created("Session".to_string()))).ok();
-    }
-
-    response.context_menu(|ui| {
-        if ui.button("New Session").clicked() {
-            sender.send(Message::Session(Session::Created("Session".to_string()))).ok();
-            ui.close();
+fn render_edit_menu(ui: &mut egui::Ui, sender: &MessageSender) {
+    ui.menu_button("Edit", |menu| {
+        if menu.button("Options").clicked() {
+            sender.send(Message::Options(OptionsMessage::Opened));
+            menu.close();
         }
     });
 }
@@ -141,45 +52,152 @@ fn render_session_tabs(
 fn render_edit_tab(
     ui: &mut egui::Ui,
     identifier: &str,
-    ui_state: &UiState,
-    sender: &Sender<Message>,
+    ui_state: &mut UiState,
+    sender: &MessageSender,
 ) {
-    let mut name = ui_state.editing_session_name.clone();
-
     let response = ui.add(
-        egui::TextEdit::singleline(&mut name)
-            .desired_width(75.0)
+        egui::TextEdit::singleline(&mut ui_state.session_editing_name)
+            .desired_width(SESSION_NAME_WIDTH_PIXELS),
     );
 
-    response.request_focus();
+    focus_if_pending(&response, &mut ui_state.session_edit_focus);
 
-    if response.changed() {
-        sender.send(Message::Session(Session::NameEdited(name.clone()))).ok();
+    let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
+    let clicked_away = ui.input(|input| input.pointer.any_released()) && !response.hovered();
+    let committed = enter || clicked_away;
+
+    if !committed {
+        return;
     }
 
-    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-    let clicked_away = ui.input(|i| i.pointer.any_released()) && !response.hovered();
+    let name = ui_state.session_editing_name.trim();
 
-    if enter || clicked_away {
-        if !name.trim().is_empty() {
-            sender.send(Message::Session(Session::Renamed {
-                identifier: identifier.to_string(),
-                name,
-            })).ok();
-        } else {
-            sender.send(Message::Session(Session::EditCancelled)).ok();
+    if name.is_empty() {
+        sender.send(Message::Session(Session::EditCancelled));
+
+        return;
+    }
+
+    sender.send(Message::Session(Session::Renamed {
+        identifier: identifier.to_owned(),
+        name: name.to_owned(),
+    }));
+}
+
+fn render_file_menu(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender: &MessageSender) {
+    ui.menu_button("File", |menu| {
+        if menu
+            .add_enabled(!ui_state.file_dialog_open, egui::Button::new("Open"))
+            .clicked()
+        {
+            sender.send(Message::App(App::FileDialogOpened));
+            menu.close();
         }
+
+        let has_tree = !model.tree.nodes.is_empty();
+
+        if menu
+            .add_enabled(has_tree, egui::Button::new("Open in Explorer"))
+            .clicked()
+        {
+            sender.send(Message::App(App::OpenInExplorer));
+            menu.close();
+        }
+
+        menu.separator();
+
+        if menu.button("New Session").clicked() {
+            sender.send(new_session_message());
+            menu.close();
+        }
+
+        let has_restorable = model.sessions.has_restorable_session();
+
+        if menu
+            .add_enabled(has_restorable, egui::Button::new("Restore Last Session"))
+            .clicked()
+        {
+            sender.send(Message::App(App::RestoreLastSession));
+            menu.close();
+        }
+
+        menu.separator();
+
+        if menu
+            .add_enabled(has_tree, egui::Button::new("Save Preset"))
+            .clicked()
+        {
+            sender.send(Message::Preset(PresetMessage::SaveDialogOpened));
+            menu.close();
+        }
+
+        if menu
+            .add_enabled(!model.presets.is_empty(), egui::Button::new("Load Preset"))
+            .clicked()
+        {
+            sender.send(Message::Preset(PresetMessage::LoadDialogOpened));
+            menu.close();
+        }
+
+        menu.separator();
+
+        if menu.button("Exit").clicked() {
+            menu.close();
+            menu.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    });
+}
+
+fn render_session_tabs(
+    ui: &mut egui::Ui,
+    model: &Model,
+    ui_state: &mut UiState,
+    sender: &MessageSender,
+) {
+    let (rectangle, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), TAB_STRIP_HEIGHT_PIXELS),
+        egui::Sense::click(),
+    );
+
+    let mut strip = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rectangle)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+
+    strip.spacing_mut().item_spacing.x = 2.0;
+
+    for session in model.sessions.ordered() {
+        let editing = ui_state.session_editing.as_deref() == Some(session.identifier.as_str());
+
+        if editing {
+            render_edit_tab(&mut strip, &session.identifier, ui_state, sender);
+        } else {
+            render_tab_label(&mut strip, session, model, sender);
+        }
+
+        strip.separator();
     }
+
+    if response.double_clicked() {
+        sender.send(new_session_message());
+    }
+
+    response.context_menu(|menu| {
+        if menu.button("New Session").clicked() {
+            sender.send(new_session_message());
+            menu.close();
+        }
+    });
 }
 
 fn render_tab_label(
     ui: &mut egui::Ui,
-    identifier: &str,
-    session: &crate::app::state::SessionData,
+    session: &SessionData,
     model: &Model,
-    sender: &Sender<Message>,
+    sender: &MessageSender,
 ) {
-    let selected = model.sessions.active_identifier.as_deref() == Some(identifier);
+    let selected = model.sessions.active_identifier() == Some(session.identifier.as_str());
 
     let text = if selected {
         egui::RichText::new(&session.name).strong()
@@ -189,32 +207,27 @@ fn render_tab_label(
 
     let response = ui.selectable_label(selected, text);
 
-    if response.clicked() && !selected {
-        sender.send(Message::Session(Session::Selected(identifier.to_string()))).ok();
+    if response.clicked() {
+        if !selected {
+            sender.send(Message::Session(Session::Selected(
+                session.identifier.clone(),
+            )));
+        }
     }
 
-    response.context_menu(|ui| {
-        if ui.button("Rename Session").clicked() {
-            sender.send(Message::Session(Session::EditStarted(identifier.to_string()))).ok();
-            ui.close();
+    response.context_menu(|menu| {
+        if menu.button("Rename Session").clicked() {
+            sender.send(Message::Session(Session::EditStarted(
+                session.identifier.clone(),
+            )));
+            menu.close();
         }
 
-        if ui.button("Delete Session").clicked() {
-            sender.send(Message::Session(Session::Deleted(identifier.to_string()))).ok();
-            ui.close();
-        }
-    });
-}
-
-fn open_file_dialog(sender: &Sender<Message>) {
-    let sender = sender.clone();
-
-    thread::spawn(move || {
-        if let Some(path) = FileDialog::new()
-            .set_title("Select File or Directory")
-            .pick_folder()
-        {
-            sender.send(Message::App(App::PathSelected(path))).ok();
+        if menu.button("Delete Session").clicked() {
+            sender.send(Message::Session(Session::Deleted(
+                session.identifier.clone(),
+            )));
+            menu.close();
         }
     });
 }

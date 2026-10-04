@@ -1,151 +1,220 @@
-use crate::app::state::search::{ParsedQuery, SearchModel};
-use crate::model::node::FileNode;
-use crate::model::options::Options;
-use crate::model::error::SwarmResult;
-use crate::services::filesystem::git::GitService;
-use crate::services::tree::loader;
+use core::slice;
+use std::path::PathBuf;
 
-pub trait Traversable {
-    fn load_children(&mut self, options: &Options) -> SwarmResult<bool>;
-    fn load_all_children(&mut self, options: &Options) -> SwarmResult<bool>;
-    fn matches_search(&self, query: &str) -> bool;
-    fn matches_parsed_query(&self, query: &ParsedQuery) -> bool;
-    fn matches_parsed_query_with_git(&self, query: &ParsedQuery, git: Option<&GitService>) -> bool;
-    fn propagate_checked(&mut self, checked: bool);
-    fn propagate_checked_with_load(&mut self, checked: bool, options: &Options);
-    fn propagate_checked_filtered(&mut self, checked: bool, options: &Options, search: &SearchModel, git: Option<&GitService>);
-    fn refresh(&mut self, options: &Options) -> SwarmResult<bool>;
+use rustc_hash::FxHashSet;
+
+use crate::model::node::{self, FileNode, TREE_DEPTH_MAX, Visit};
+use crate::model::query::ParsedQuery;
+use crate::services::filesystem::filter::GlobPathFilter;
+use crate::services::filesystem::git::GitService;
+use crate::services::tree::{loader, query};
+
+pub struct PropagateRequest<'request> {
+    pub checked: bool,
+    pub depth: u32,
+    pub filter: &'request GlobPathFilter,
+    pub git: Option<&'request GitService>,
+    pub matches: Option<&'request FxHashSet<PathBuf>>,
+    pub query: Option<&'request ParsedQuery>,
 }
 
-impl Traversable for FileNode {
-    fn load_children(&mut self, options: &Options) -> SwarmResult<bool> {
-        loader::load_children(self, options)
-    }
+pub fn expand_checked(nodes: &mut [FileNode], filter: &GlobPathFilter) -> u32 {
+    let mut failed_count: u32 = 0;
 
-    fn load_all_children(&mut self, options: &Options) -> SwarmResult<bool> {
-        loader::load_all_children(self, options)
-    }
-
-    fn matches_search(&self, query: &str) -> bool {
-        if query.is_empty() {
-            return true;
+    node::walk_mut(nodes, |current, depth| {
+        if !current.is_directory() {
+            return Visit::Skip;
         }
 
-        let parsed = ParsedQuery::parse(query);
-        self.matches_parsed_query(&parsed)
-    }
+        if current.loaded {
+            return Visit::Descend;
+        }
 
-    fn matches_parsed_query(&self, query: &ParsedQuery) -> bool {
-        self.matches_parsed_query_with_git(query, None)
-    }
+        if !current.checked {
+            return Visit::Skip;
+        }
 
-    fn matches_parsed_query_with_git(&self, query: &ParsedQuery, git: Option<&GitService>) -> bool {
-        self.matches_query_recursive(query, git, 0)
-    }
+        if loader::load_children(current, depth, filter).is_err() {
+            failed_count += 1;
+        }
 
-    fn propagate_checked(&mut self, checked: bool) {
-        self.checked = checked;
+        Visit::Descend
+    });
 
-        if self.is_directory() {
-            for child in &mut self.children {
-                child.propagate_checked(checked);
+    failed_count
+}
+
+fn load_subtree(node: &mut FileNode, depth_base: u32, filter: &GlobPathFilter) -> u32 {
+    assert!(depth_base < TREE_DEPTH_MAX);
+
+    let mut failed_count: u32 = 0;
+
+    node::walk_mut(slice::from_mut(node), |current, depth| {
+        if !current.is_directory() {
+            return Visit::Skip;
+        }
+
+        if !current.loaded {
+            if loader::load_children(current, depth_base + depth, filter).is_err() {
+                failed_count += 1;
             }
         }
-    }
 
-    fn propagate_checked_with_load(&mut self, checked: bool, options: &Options) {
-        self.checked = checked;
+        Visit::Descend
+    });
 
-        if self.is_directory() {
-            if !self.loaded {
-                let _ = self.load_children(options);
-            }
+    failed_count
+}
 
-            for child in &mut self.children {
-                child.propagate_checked_with_load(checked, options);
-            }
-        }
-    }
+pub fn propagate_checked(node: &mut FileNode, request: &PropagateRequest<'_>) -> u32 {
+    let failed_count = load_subtree(node, request.depth, request.filter);
 
-    fn propagate_checked_filtered(&mut self, checked: bool, options: &Options, search: &SearchModel, git: Option<&GitService>) {
-        if !search.has_query() {
-            self.propagate_checked_with_load(checked, options);
+    let Some(query) = request.query.filter(|query| !query.is_empty()) else {
+        node::visit_mut(slice::from_mut(node), |current, _| {
+            current.checked = request.checked;
+        });
+
+        return failed_count;
+    };
+
+    let computed;
+
+    let matches = if let Some(precomputed) = request.matches {
+        precomputed
+    } else {
+        computed = query::matching_paths(slice::from_ref(node), query, request.git, request.depth);
+
+        &computed
+    };
+
+    node.checked = request.checked;
+
+    node::visit_mut(slice::from_mut(node), |current, depth| {
+        if depth == 0 {
             return;
         }
 
-        self.checked = checked;
+        if matches.contains(&current.path) {
+            current.checked = request.checked;
+        }
+    });
 
-        if self.is_directory() {
-            if !self.loaded {
-                let _ = self.load_children(options);
-            }
+    failed_count
+}
 
-            for child in &mut self.children {
-                if should_show_node_with_search(child, search, git) {
-                    child.propagate_checked_filtered(checked, options, search, git);
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::*;
+    use crate::model::node::NodeKind;
+    use crate::model::options::Options;
+
+    struct TemporaryTree {
+        root: PathBuf,
+    }
+
+    impl TemporaryTree {
+        fn new() -> Self {
+            let root =
+                std::env::temp_dir().join(format!("swarm-traversal-{}", uuid::Uuid::new_v4()));
+
+            fs::create_dir_all(root.join("inner")).expect("the test directory is creatable");
+            fs::write(root.join("top.rs"), "").expect("the test file is writable");
+            fs::write(root.join("inner").join("deep.py"), "").expect("the test file is writable");
+
+            Self { root }
+        }
+    }
+
+    impl Drop for TemporaryTree {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).expect("the test directory is removable");
+        }
+    }
+
+    fn checked_files(node: &FileNode) -> Vec<String> {
+        let mut names = Vec::new();
+
+        node::visit(slice::from_ref(node), |current, _| {
+            if current.is_file() {
+                if current.checked {
+                    names.push(current.name.to_string());
                 }
             }
-        }
+        });
+
+        names.sort();
+
+        names
     }
 
-    fn refresh(&mut self, options: &Options) -> SwarmResult<bool> {
-        loader::refresh_node(self, options)
-    }
-}
+    #[test]
+    fn propagation_loads_and_checks_the_whole_subtree() {
+        let tree = TemporaryTree::new();
 
-pub fn should_show_node(node: &FileNode, search_query: &str) -> bool {
-    should_show_node_with_git(node, search_query, None)
-}
+        let filter =
+            GlobPathFilter::from_options(&Options::default()).expect("the defaults compile");
 
-pub fn should_show_node_with_git(node: &FileNode, search_query: &str, git: Option<&GitService>) -> bool {
-    if search_query.is_empty() {
-        return true;
-    }
+        let mut root = FileNode::with_kind(tree.root.clone(), NodeKind::Directory);
 
-    let parsed = ParsedQuery::parse(search_query);
-    node.matches_parsed_query_with_git(&parsed, git)
-}
+        let request = PropagateRequest {
+            checked: true,
+            depth: 0,
+            filter: &filter,
+            git: None,
+            matches: None,
+            query: None,
+        };
 
-pub fn should_show_node_with_search(node: &FileNode, search: &SearchModel, git: Option<&GitService>) -> bool {
-    if !search.has_query() {
-        return true;
-    }
+        let failed_count = propagate_checked(&mut root, &request);
 
-    if let Some(is_match) = search.is_path_matching(&node.path) {
-        if node.is_directory() {
-            return is_match || node.children.iter().any(|c| should_show_node_with_search(c, search, git));
-        }
-
-        return is_match;
+        assert_eq!(failed_count, 0);
+        assert_eq!(checked_files(&root), vec!["deep.py".to_owned(), "top.rs".to_owned()]);
     }
 
-    let parsed = search.parsed();
-    node.matches_parsed_query_with_git(parsed.as_ref(), git)
-}
+    #[test]
+    fn filtered_propagation_checks_only_matches() {
+        let tree = TemporaryTree::new();
 
-pub fn should_show_node_at_depth(
-    node: &FileNode,
-    search: &SearchModel,
-    git: Option<&GitService>,
-    depth: usize,
-    query: &ParsedQuery,
-) -> bool {
-    if !search.has_query() {
-        return true;
+        let filter =
+            GlobPathFilter::from_options(&Options::default()).expect("the defaults compile");
+
+        let query = ParsedQuery::parse("ext:py");
+        let mut root = FileNode::with_kind(tree.root.clone(), NodeKind::Directory);
+
+        let request = PropagateRequest {
+            checked: true,
+            depth: 0,
+            filter: &filter,
+            git: None,
+            matches: None,
+            query: Some(&query),
+        };
+
+        let failed_count = propagate_checked(&mut root, &request);
+
+        assert_eq!(failed_count, 0);
+        assert_eq!(checked_files(&root), vec!["deep.py".to_owned()]);
     }
 
-    if let Some(is_match) = search.is_path_matching(&node.path) {
-        if node.is_directory() {
-            if query.has_depth_filter() && !query.matches_depth(depth) {
-                return false;
-            }
+    #[test]
+    fn expansion_loads_only_checked_directories() {
+        let tree = TemporaryTree::new();
 
-            return is_match || node.children.iter().any(|c| {
-                should_show_node_at_depth(c, search, git, depth + 1, query)
-            });
-        }
-        return is_match;
+        let filter =
+            GlobPathFilter::from_options(&Options::default()).expect("the defaults compile");
+
+        let mut nodes = vec![FileNode::with_kind(tree.root.clone(), NodeKind::Directory)];
+
+        assert_eq!(expand_checked(&mut nodes, &filter), 0);
+        assert!(!nodes[0].loaded);
+
+        nodes[0].checked = true;
+
+        assert_eq!(expand_checked(&mut nodes, &filter), 0);
+        assert!(nodes[0].loaded);
+        assert!(!nodes[0].children[0].loaded);
     }
-
-    node.matches_query_recursive(query, git, depth)
 }

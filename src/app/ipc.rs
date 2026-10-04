@@ -1,82 +1,96 @@
-use std::io::Read;
+use core::time::Duration;
+use std::io::{self, Read as _};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::mpsc::Sender;
 use std::thread;
 
-use crate::app::message::{App, Message};
+use crate::app::message::{App, Message, MessageSender};
+use crate::constants::{
+    IPC_ADDRESS,
+    IPC_MESSAGE_BYTES_MAX,
+    IPC_PATH_COUNT_MAX,
+    IPC_READ_TIMEOUT_MS,
+};
 
-pub struct IpcListener {
-    bind_address: String,
-    connection_count_max: usize,
-    sender: Sender<Message>,
+fn handle_connection(stream: TcpStream, sender: &MessageSender) {
+    if let Err(error) = stream.set_read_timeout(Some(Duration::from_millis(IPC_READ_TIMEOUT_MS))) {
+        eprintln!("Failed to bound the IPC read: {error}");
+
+        return;
+    }
+
+    let mut buffer = String::new();
+    let mut reader = stream.take(IPC_MESSAGE_BYTES_MAX);
+
+    if let Err(error) = reader.read_to_string(&mut buffer) {
+        eprintln!("Failed to read from the IPC stream: {error}");
+
+        return;
+    }
+
+    assert!(buffer.len() as u64 <= IPC_MESSAGE_BYTES_MAX);
+
+    let paths = parse_paths(&buffer);
+
+    if paths.is_empty() {
+        return;
+    }
+
+    debug_assert!(paths.len() <= IPC_PATH_COUNT_MAX as usize);
+
+    sender.send(Message::App(App::PathsReceivedFromIpc(paths)));
 }
 
-impl IpcListener {
-    pub fn new(sender: Sender<Message>) -> Self {
-        Self {
-            bind_address: "127.0.0.1:44287".to_string(),
-            connection_count_max: 1000,
-            sender,
+fn parse_paths(buffer: &str) -> Vec<PathBuf> {
+    let paths: Vec<PathBuf> = buffer
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .take(IPC_PATH_COUNT_MAX as usize)
+        .map(PathBuf::from)
+        .collect();
+
+    assert!(paths.len() <= IPC_PATH_COUNT_MAX as usize);
+
+    paths
+}
+
+fn serve(listener: &TcpListener, sender: &MessageSender) {
+    for connection in listener.incoming() {
+        match connection {
+            Ok(stream) => handle_connection(stream, sender),
+            Err(error) => eprintln!("IPC connection error: {error}"),
         }
     }
+}
 
-    pub fn spawn(self) -> Option<thread::JoinHandle<()>> {
-        let handle = thread::spawn(move || {
-            self.run();
-        });
+pub fn spawn(sender: MessageSender) -> io::Result<()> {
+    let listener = TcpListener::bind(IPC_ADDRESS)?;
 
-        Some(handle)
+    thread::Builder::new()
+        .name("ipc".to_owned())
+        .spawn(move || serve(&listener, &sender))?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blank_lines_are_ignored() {
+        let paths = parse_paths("/a\n\n  \n/b\r\n");
+
+        assert_eq!(paths, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
     }
 
-    fn run(self) {
-        let listener = match TcpListener::bind(&self.bind_address) {
-            Ok(listener) => listener,
-            Err(error) => {
-                eprintln!("Failed to bind IPC listener to {}: {}", self.bind_address, error);
-                return;
-            }
-        };
+    #[test]
+    fn the_path_count_is_bounded() {
+        let buffer = (0..IPC_PATH_COUNT_MAX + 10)
+            .map(|index| format!("/path/{index}"))
+            .collect::<Vec<String>>()
+            .join("\n");
 
-        for (index, stream) in listener.incoming().enumerate() {
-            if index >= self.connection_count_max {
-                break;
-            }
-
-            match stream {
-                Ok(stream) => self.handle_connection(stream),
-                Err(error) => {
-                    eprintln!("IPC connection error: {}", error);
-                    continue;
-                }
-            }
-        }
-    }
-
-    fn handle_connection(&self, mut stream: TcpStream) {
-        let mut buffer = String::new();
-
-        if let Err(error) = stream.read_to_string(&mut buffer) {
-            eprintln!("Failed to read from IPC stream: {}", error);
-            return;
-        }
-
-        let paths = self.parse_paths(&buffer);
-
-        if paths.is_empty() {
-            return;
-        }
-
-        if self.sender.send(Message::App(App::PathsReceivedFromIpc(paths))).is_err() {
-            eprintln!("Failed to send IPC message: receiver disconnected");
-        }
-    }
-
-    fn parse_paths(&self, buffer: &str) -> Vec<PathBuf> {
-        buffer
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(PathBuf::from)
-            .collect()
+        assert_eq!(parse_paths(&buffer).len(), IPC_PATH_COUNT_MAX as usize);
     }
 }

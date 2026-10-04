@@ -1,5 +1,8 @@
+.tigerstyle_cache/
 debug/
 target/
 **/*.rs.bk
 *.pdb
 .idea/
+
+assets/Output/

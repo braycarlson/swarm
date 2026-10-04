@@ -1,1 +1,5 @@
+avoid-breaking-exported-api = false
 disallowed-types = ["std::collections::HashMap", "std::collections::HashSet"]
+source-item-ordering = ["enum", "struct"]
+too-many-arguments-threshold = 7
+too-many-lines-threshold = 70

@@ -1,83 +1,91 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::SyncSender;
 
+use rustc_hash::FxHashSet;
+
+use crate::constants::IPC_PATH_COUNT_MAX;
 use crate::model::node::FileNode;
-use crate::model::options::Options;
+use crate::model::path;
 
 use super::core::{Worker, WorkerTask};
 
-pub enum SessionLoadCommand {
-    Cancel,
-    Load(PathBuf, Options),
+pub struct SessionLoadRequest {
+    pub paths: Vec<PathBuf>,
+    pub session: String,
 }
 
-pub enum SessionLoadResult {
-    Error(String),
-    Loaded(Vec<FileNode>),
-    Loading(String),
+pub struct SessionLoadResult {
+    pub missing: Vec<PathBuf>,
+    pub nodes: Vec<FileNode>,
+    pub session: String,
 }
 
-pub struct SessionLoadTask {
-    loading: Arc<AtomicBool>,
-}
+struct SessionLoadTask;
 
 impl SessionLoadTask {
-    fn new() -> Self {
-        Self {
-            loading: Arc::new(AtomicBool::new(false)),
+    fn roots_for(paths: Vec<PathBuf>) -> (Vec<FileNode>, Vec<PathBuf>) {
+        assert!(paths.len() <= IPC_PATH_COUNT_MAX as usize);
+
+        let mut nodes = Vec::with_capacity(paths.len());
+        let mut missing = Vec::new();
+        let mut seen = FxHashSet::default();
+
+        for requested in paths {
+            if !requested.exists() {
+                missing.push(requested);
+
+                continue;
+            }
+
+            let directory = path::directory_of(&requested);
+
+            if seen.insert(directory.clone()) {
+                nodes.push(FileNode::new(directory));
+            }
         }
-    }
 
-    fn load_path(path: PathBuf) -> Result<Vec<FileNode>, String> {
-        let actual_path = if path.is_file() {
-            path.parent()
-                .map(|parent| parent.to_path_buf())
-                .unwrap_or(path)
-        } else {
-            path
-        };
+        debug_assert!(nodes.len() <= IPC_PATH_COUNT_MAX as usize);
 
-        let node = FileNode::new(actual_path);
-        Ok(vec![node])
+        (nodes, missing)
     }
 }
 
 impl WorkerTask for SessionLoadTask {
-    type Command = SessionLoadCommand;
+    type Command = SessionLoadRequest;
     type Result = SessionLoadResult;
 
-    fn process(&mut self, command: Self::Command, result_sender: &Sender<Self::Result>) {
-        match command {
-            SessionLoadCommand::Load(path, _options) => {
-                self.loading.store(true, Ordering::Relaxed);
+    fn process(&mut self, request: Self::Command, results: &SyncSender<Self::Result>) {
+        let (nodes, missing) = Self::roots_for(request.paths);
 
-                let loading_message = format!("Loading {}", path.display());
-                let _ = result_sender.send(SessionLoadResult::Loading(loading_message));
-
-                match Self::load_path(path.clone()) {
-                    Ok(nodes) => {
-                        self.loading.store(false, Ordering::Relaxed);
-                        let _ = result_sender.send(SessionLoadResult::Loaded(nodes));
-                    }
-                    Err(error) => {
-                        self.loading.store(false, Ordering::Relaxed);
-                        let error_message = format!("Failed to load path {}: {}", path.display(), error);
-                        let _ = result_sender.send(SessionLoadResult::Error(error_message));
-                    }
-                }
-            }
-            SessionLoadCommand::Cancel => {
-                self.loading.store(false, Ordering::Relaxed);
-            }
-        }
+        let _ = results.send(SessionLoadResult {
+            missing,
+            nodes,
+            session: request.session,
+        });
     }
 }
 
 pub struct SessionLoader {
-    loading: Arc<AtomicBool>,
     worker: Worker<SessionLoadTask>,
+}
+
+impl SessionLoader {
+    pub fn check_results(&self) -> Option<SessionLoadResult> {
+        self.worker.try_recv()
+    }
+
+    pub fn new() -> Self {
+        Self {
+            worker: Worker::spawn("session-loader", SessionLoadTask),
+        }
+    }
+
+    pub fn start(&self, request: SessionLoadRequest) -> bool {
+        assert_ne!(request.paths.len(), 0);
+        assert_ne!(request.session, "");
+
+        self.worker.send(request)
+    }
 }
 
 impl Default for SessionLoader {
@@ -86,46 +94,20 @@ impl Default for SessionLoader {
     }
 }
 
-impl SessionLoader {
-    pub fn new() -> Self {
-        let task = SessionLoadTask::new();
-        let loading = Arc::clone(&task.loading);
-        let worker = Worker::spawn(task);
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        Self { loading, worker }
-    }
+    #[test]
+    fn missing_paths_are_reported_and_duplicates_collapse() {
+        let directory = std::env::temp_dir();
+        let missing = PathBuf::from("/nonexistent/swarm/session");
 
-    pub fn check_results(&self) -> Option<SessionLoadResult> {
-        self.worker.try_recv()
-    }
+        let (nodes, absent) =
+            SessionLoadTask::roots_for(vec![directory.clone(), missing.clone(), directory.clone()]);
 
-    pub fn start_loading(&self, path: PathBuf, options: Options) -> bool {
-        if self.loading.load(Ordering::Relaxed) {
-            return false;
-        }
-
-        let command = SessionLoadCommand::Load(path, options);
-
-        if self.worker.send(command) {
-            self.loading.store(true, Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
-    }
-}
-
-impl Clone for SessionLoader {
-    fn clone(&self) -> Self {
-        Self {
-            loading: Arc::clone(&self.loading),
-            worker: self.worker.clone(),
-        }
-    }
-}
-
-impl Drop for SessionLoader {
-    fn drop(&mut self) {
-        let _ = self.worker.send(SessionLoadCommand::Cancel);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].path, directory);
+        assert_eq!(absent, vec![missing]);
     }
 }

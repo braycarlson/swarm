@@ -1,49 +1,45 @@
 use std::path::{Path, PathBuf};
 
-pub trait PathExtensions {
-    fn clean_path(&self) -> PathBuf;
-    fn file_name_string(&self) -> Option<String>;
-    fn is_hidden(&self) -> bool;
-    fn lowercase_name(&self) -> String;
+pub fn canonical(path: &Path) -> PathBuf {
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-impl PathExtensions for Path {
-    fn clean_path(&self) -> PathBuf {
-        dunce::canonicalize(self).unwrap_or_else(|_| self.to_path_buf())
+pub fn directory_of(path: &Path) -> PathBuf {
+    if !path.is_file() {
+        return path.to_path_buf();
     }
 
-    fn file_name_string(&self) -> Option<String> {
-        self.file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-    }
-
-    fn is_hidden(&self) -> bool {
-        self.file_name()
-            .map(|name| name.as_encoded_bytes().first() == Some(&b'.'))
-            .unwrap_or(false)
-    }
-
-    fn lowercase_name(&self) -> String {
-        self.file_name()
-            .map(|name| name.to_string_lossy().to_ascii_lowercase())
-            .unwrap_or_default()
-    }
+    path.parent()
+        .map_or_else(|| path.to_path_buf(), Path::to_path_buf)
 }
 
-impl PathExtensions for PathBuf {
-    fn clean_path(&self) -> PathBuf {
-        self.as_path().clean_path()
+pub fn is_hidden(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.as_encoded_bytes().first() == Some(&b'.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_directory_is_its_own_directory() {
+        let directory = std::env::temp_dir();
+
+        assert_eq!(directory_of(&directory), directory);
     }
 
-    fn file_name_string(&self) -> Option<String> {
-        self.as_path().file_name_string()
+    #[test]
+    fn a_missing_path_passes_through() {
+        let missing = Path::new("/nonexistent/swarm/path");
+
+        assert_eq!(directory_of(missing), missing);
     }
 
-    fn is_hidden(&self) -> bool {
-        self.as_path().is_hidden()
-    }
-
-    fn lowercase_name(&self) -> String {
-        self.as_path().lowercase_name()
+    #[test]
+    fn dotfiles_are_hidden() {
+        assert!(is_hidden(Path::new("/a/.git")));
+        assert!(!is_hidden(Path::new("/a/src")));
+        assert!(!is_hidden(Path::new("/")));
     }
 }

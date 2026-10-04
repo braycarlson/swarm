@@ -1,79 +1,44 @@
 use crate::app::message::{Command, Filter};
 use crate::app::state::{Model, UiState};
+use crate::model::options::PatternList;
+
+use super::options::commit_options;
 
 pub fn handle(model: &mut Model, ui: &mut UiState, message: Filter) -> Command {
     match message {
-        Filter::IncludeAdded(filter) => handle_include_filter_added(model, ui, filter),
-        Filter::IncludeRemoved(index) => handle_include_filter_removed(model, index),
-        Filter::IncludesCleared => handle_include_filters_cleared(model),
-        Filter::IncludeFilterChanged(text) => handle_include_filter_changed(ui, text),
-        Filter::ExcludeAdded(filter) => handle_exclude_filter_added(model, ui, filter),
-        Filter::ExcludeRemoved(index) => handle_exclude_filter_removed(model, index),
-        Filter::ExcludesReset => handle_exclude_filters_reset(model),
-        Filter::ExcludeFilterChanged(text) => handle_exclude_filter_changed(ui, text),
-    }
-}
+        Filter::Added { list, pattern } => handle_added(model, ui, list, &pattern),
+        Filter::Removed { index, list } => {
+            let mut options = (*model.options).clone();
 
-fn handle_include_filter_added(model: &mut Model, ui: &mut UiState, filter: String) -> Command {
-    let mut new_options = (*model.options).clone();
+            if options.remove_pattern(list, index) {
+                commit_options(model, ui, options);
+            }
+        }
+        Filter::Reset(list) => {
+            let mut options = (*model.options).clone();
 
-    if new_options.add_include_filter(filter) {
-        ui.filter_include_new.clear();
-        model.update_options(new_options);
+            options.reset_patterns(list);
+            commit_options(model, ui, options);
+        }
     }
 
     Command::None
 }
 
-fn handle_include_filter_removed(model: &mut Model, index: usize) -> Command {
-    let mut new_options = (*model.options).clone();
-    new_options.remove_include_filter(index);
-    model.update_options(new_options);
+fn handle_added(model: &mut Model, ui: &mut UiState, list: PatternList, pattern: &str) {
+    let mut options = (*model.options).clone();
 
-    Command::None
-}
+    if let Err(error) = options.add_pattern(list, pattern) {
+        ui.toast
+            .error(format!("The pattern was not added: {error}"));
 
-fn handle_include_filters_cleared(model: &mut Model) -> Command {
-    let mut new_options = (*model.options).clone();
-    new_options.clear_includes();
-    model.update_options(new_options);
-
-    Command::None
-}
-
-fn handle_include_filter_changed(ui: &mut UiState, text: String) -> Command {
-    ui.filter_include_new = text;
-    Command::None
-}
-
-fn handle_exclude_filter_added(model: &mut Model, ui: &mut UiState, filter: String) -> Command {
-    let mut new_options = (*model.options).clone();
-
-    if new_options.add_exclude_filter(filter) {
-        ui.filter_exclude_new.clear();
-        model.update_options(new_options);
+        return;
     }
 
-    Command::None
-}
+    commit_options(model, ui, options);
 
-fn handle_exclude_filter_removed(model: &mut Model, index: usize) -> Command {
-    let mut new_options = (*model.options).clone();
-    new_options.remove_exclude_filter(index);
-    model.update_options(new_options);
-
-    Command::None
-}
-
-fn handle_exclude_filters_reset(model: &mut Model) -> Command {
-    let mut new_options = (*model.options).clone();
-    new_options.reset_excludes_to_defaults();
-    model.update_options(new_options);
-
-    Command::None
-}
-
-fn handle_exclude_filter_changed(ui: &mut UiState, text: String) -> Command {
-    ui.filter_exclude_new = text;
-    Command::None
+    match list {
+        PatternList::Exclude => ui.pattern_exclude_new.clear(),
+        PatternList::Include => ui.pattern_include_new.clear(),
+    }
 }

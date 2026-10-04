@@ -1,153 +1,24 @@
-use std::sync::mpsc::Sender;
-
 use eframe::egui;
 
-use crate::app::message::{Copy, Message, Render, Skeleton};
-use crate::app::state::{LoadStatus, Model, UiState};
+use crate::app::message::{CopyMessage, Message, MessageSender, Render, Skeleton};
 use crate::app::state::ui::GenerateMode;
+use crate::app::state::{FilterStatus, LoadStatus, Model, UiState};
 
-pub fn render(
-    ui: &mut egui::Ui,
-    model: &Model,
-    ui_state: &UiState,
-    sender: &Sender<Message>,
-) {
-    egui::Panel::bottom("bottom_panel")
-        .min_size(40.0)
-        .resizable(false)
-        .show_inside(ui, |ui| {
-            ui.vertical_centered(|ui| {
-                ui.add_space(10.0);
-
-                ui.horizontal(|ui| {
-                    let row_height = ui.spacing().interact_size.y;
-                    let padding = 8.0;
-
-                    let tree_is_loading = matches!(model.tree.load_status, LoadStatus::Loading { .. });
-                    let can_copy = !ui_state.copy_in_progress && !tree_is_loading;
-
-                    let copy_label = if ui_state.copy_in_progress {
-                        "Copying..."
-                    } else {
-                        "Copy"
-                    };
-
-                    if ui.add_enabled(
-                        can_copy,
-                        egui::Button::new(copy_label).min_size(egui::vec2(120.0, row_height + padding))
-                    ).clicked() {
-                        let _ = sender.send(Message::Copy(Copy::Requested));
-                    }
-
-                    render_generate_split_button(ui, ui_state, sender, row_height, padding, tree_is_loading);
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(10.0);
-
-                        if matches!(model.tree.load_status, LoadStatus::Loading { .. }) {
-                            ui.spinner();
-
-                            if let LoadStatus::Loading { message, .. } = &model.tree.load_status {
-                                ui.label(
-                                    egui::RichText::new(message)
-                                        .color(ui.visuals().weak_text_color())
-                                );
-                            }
-                        }
-
-                        if !tree_is_loading && model.tree.files_count > 0 {
-                            ui.label(
-                                egui::RichText::new(format!("{} files", model.tree.files_count))
-                                    .color(ui.visuals().weak_text_color())
-                            );
-                        }
-                    });
-                });
-
-                ui.add_space(8.0);
-            });
-        });
-}
-
-fn render_generate_split_button(
-    ui: &mut egui::Ui,
-    ui_state: &UiState,
-    sender: &Sender<Message>,
-    row_height: f32,
-    padding: f32,
-    tree_is_loading: bool,
-) {
-    let any_generate_in_progress = ui_state.tree_generate_in_progress || ui_state.skeleton_generate_in_progress;
-    let can_generate = !any_generate_in_progress && !tree_is_loading;
-    let button_height = row_height + padding;
-
-    let main_label = if any_generate_in_progress {
-        match ui_state.generate_mode {
-            GenerateMode::Tree => "Generating...",
-            GenerateMode::Skeleton => "Generating...",
-        }
-    } else {
-        match ui_state.generate_mode {
-            GenerateMode::Tree => "Generate Tree",
-            GenerateMode::Skeleton => "Generate Skeleton",
-        }
-    };
-
-    let saved_spacing = ui.spacing().item_spacing.x;
-    ui.spacing_mut().item_spacing.x = 2.0;
-
-    if ui.add_enabled(
-        can_generate,
-        egui::Button::new(main_label).min_size(egui::vec2(150.0, button_height))
-    ).clicked() {
-        match ui_state.generate_mode {
-            GenerateMode::Tree => {
-                let _ = sender.send(Message::Render(Render::Requested));
-            }
-            GenerateMode::Skeleton => {
-                let _ = sender.send(Message::Skeleton(Skeleton::Requested));
-            }
-        }
-    }
-
-    let arrow_response = ui.add_enabled(
-        can_generate,
-        egui::Button::new("  ").min_size(egui::vec2(22.0, button_height))
-    );
-
-    paint_dropdown_arrow(ui, &arrow_response);
-
-    ui.spacing_mut().item_spacing.x = saved_spacing;
-
-    egui::Popup::from_toggle_button_response(&arrow_response)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-        .show(|ui: &mut egui::Ui| {
-            ui.set_min_width(170.0);
-
-            if ui.selectable_label(
-                ui_state.generate_mode == GenerateMode::Tree,
-                "Generate Tree",
-            ).clicked() {
-                let _ = sender.send(Message::Skeleton(Skeleton::ModeChanged(GenerateMode::Tree)));
-            }
-
-            if ui.selectable_label(
-                ui_state.generate_mode == GenerateMode::Skeleton,
-                "Generate Skeleton",
-            ).clicked() {
-                let _ = sender.send(Message::Skeleton(Skeleton::ModeChanged(GenerateMode::Skeleton)));
-            }
-        });
-}
+const ARROW_HALF_PIXELS: f32 = 3.5;
+const BUTTON_PADDING_PIXELS: f32 = 8.0;
+const COPY_WIDTH_PIXELS: f32 = 120.0;
+const GENERATE_WIDTH_PIXELS: f32 = 150.0;
+const MENU_WIDTH_PIXELS: f32 = 170.0;
+const SPLIT_WIDTH_PIXELS: f32 = 22.0;
 
 fn paint_dropdown_arrow(ui: &egui::Ui, response: &egui::Response) {
     let center = response.rect.center();
-    let half = 3.5;
+    let half = ARROW_HALF_PIXELS;
 
     let points = vec![
-        egui::pos2(center.x - half, center.y - half * 0.4),
-        egui::pos2(center.x + half, center.y - half * 0.4),
-        egui::pos2(center.x, center.y + half * 0.7),
+        egui::pos2(center.x - half, half.mul_add(-0.4, center.y)),
+        egui::pos2(center.x + half, half.mul_add(-0.4, center.y)),
+        egui::pos2(center.x, half.mul_add(0.7, center.y)),
     ];
 
     let color = if response.hovered() {
@@ -161,4 +32,117 @@ fn paint_dropdown_arrow(ui: &egui::Ui, response: &egui::Response) {
         color,
         egui::Stroke::NONE,
     ));
+}
+
+pub fn render(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender: &MessageSender) {
+    egui::Panel::bottom("bottom_panel")
+        .min_size(40.0)
+        .resizable(false)
+        .show_inside(ui, |panel| {
+            panel.vertical_centered(|centered| {
+                centered.add_space(10.0);
+                centered.horizontal(|row| render_controls(row, model, ui_state, sender));
+                centered.add_space(8.0);
+            });
+        });
+}
+
+fn render_controls(ui: &mut egui::Ui, model: &Model, ui_state: &UiState, sender: &MessageSender) {
+    let button_height = ui.spacing().interact_size.y + BUTTON_PADDING_PIXELS;
+    let busy = model.tree.is_loading() || ui_state.filter_status == FilterStatus::Filtering;
+    let can_copy = !ui_state.copy_in_progress && !busy;
+
+    let copy_label = if ui_state.copy_in_progress {
+        "Copying..."
+    } else {
+        "Copy"
+    };
+
+    let copy = egui::Button::new(copy_label).min_size(egui::vec2(COPY_WIDTH_PIXELS, button_height));
+
+    if ui.add_enabled(can_copy, copy).clicked() {
+        sender.send(Message::Copy(CopyMessage::Requested));
+    }
+
+    render_generate_split_button(ui, ui_state, sender, button_height, busy);
+
+    ui.with_layout(
+        egui::Layout::right_to_left(egui::Align::Center),
+        |aligned| {
+            aligned.add_space(10.0);
+            render_status(aligned, model);
+        },
+    );
+}
+
+fn render_generate_split_button(
+    ui: &mut egui::Ui,
+    ui_state: &UiState,
+    sender: &MessageSender,
+    button_height: f32,
+    busy: bool,
+) {
+    let generating = ui_state.is_generating();
+    let can_generate = !generating && !busy;
+
+    let label = match (generating, ui_state.generate_mode) {
+        (true, _) => "Generating...",
+        (false, GenerateMode::Skeleton) => "Generate Skeleton",
+        (false, GenerateMode::Tree) => "Generate Tree",
+    };
+
+    let spacing_saved = ui.spacing().item_spacing.x;
+
+    ui.spacing_mut().item_spacing.x = 2.0;
+
+    let generate =
+        egui::Button::new(label).min_size(egui::vec2(GENERATE_WIDTH_PIXELS, button_height));
+
+    if ui.add_enabled(can_generate, generate).clicked() {
+        let message = match ui_state.generate_mode {
+            GenerateMode::Skeleton => Message::Skeleton(Skeleton::Requested),
+            GenerateMode::Tree => Message::Render(Render::Requested),
+        };
+
+        sender.send(message);
+    }
+
+    let split = egui::Button::new("  ").min_size(egui::vec2(SPLIT_WIDTH_PIXELS, button_height));
+    let arrow = ui.add_enabled(can_generate, split);
+
+    paint_dropdown_arrow(ui, &arrow);
+    ui.spacing_mut().item_spacing.x = spacing_saved;
+
+    egui::Popup::from_toggle_button_response(&arrow)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+        .show(|popup: &mut egui::Ui| {
+            popup.set_min_width(MENU_WIDTH_PIXELS);
+
+            for (mode, text) in [
+                (GenerateMode::Tree, "Generate Tree"),
+                (GenerateMode::Skeleton, "Generate Skeleton"),
+            ] {
+                if popup
+                    .selectable_label(ui_state.generate_mode == mode, text)
+                    .clicked()
+                {
+                    sender.send(Message::Skeleton(Skeleton::ModeChanged(mode)));
+                }
+            }
+        });
+}
+
+fn render_status(ui: &mut egui::Ui, model: &Model) {
+    let weak = ui.visuals().weak_text_color();
+
+    if let LoadStatus::Loading(message) = &model.tree.load_status {
+        ui.spinner();
+        ui.label(egui::RichText::new(message).color(weak));
+
+        return;
+    }
+
+    if model.tree.files_count > 0 {
+        ui.label(egui::RichText::new(&model.tree.files_label).color(weak));
+    }
 }

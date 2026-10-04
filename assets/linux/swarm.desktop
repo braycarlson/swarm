@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=swarm
+GenericName=Project Context Generator
+Comment=A developer tool for generating project context
+Exec=swarm-gui %F
+TryExec=swarm-gui
+Icon=swarm
+Terminal=false
+Categories=Development;
+Keywords=context;llm;source;tree;clipboard;
+StartupNotify=true
+StartupWMClass=swarm
+MimeType=inode/directory;

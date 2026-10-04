@@ -1,97 +1,79 @@
-use crate::app::message::{Command, CommandBuilder, Session};
-use crate::app::state::{Model, UiState};
+use crate::app::message::{Command, Session};
+use crate::app::state::{FilterStatus, LoadStatus, Model, SearchModel, TreeModel, UiState};
 
-use super::sync_to_active_session;
+use super::common::switch_to;
 
 pub fn handle(model: &mut Model, ui: &mut UiState, message: Session) -> Command {
     match message {
-        Session::Created(name) => handle_session_created(model, name),
-        Session::Selected(identifier) => handle_session_selected(model, ui, identifier),
-        Session::Deleted(identifier) => handle_session_deleted(model, identifier),
-        Session::NameEdited(name) => handle_session_name_edited(ui, name),
-        Session::Renamed { identifier, name } => handle_session_renamed(model, ui, identifier, name),
-        Session::EditStarted(identifier) => handle_session_edit_started(model, ui, identifier),
-        Session::EditCancelled => handle_session_edit_cancelled(ui),
+        Session::Created(name) => handle_created(model, ui, name),
+        Session::Deleted(identifier) => handle_deleted(model, ui, identifier),
+        Session::EditCancelled => {
+            ui.cancel_session_edit();
+
+            Command::None
+        }
+        Session::EditStarted(identifier) => {
+            if let Some(session) = model.sessions.get(&identifier) {
+                ui.start_session_edit(session);
+            }
+
+            Command::None
+        }
+        Session::Renamed { identifier, name } => {
+            model.sessions.rename_session(&identifier, name);
+            ui.cancel_session_edit();
+
+            Command::None
+        }
+        Session::Selected(identifier) => handle_selected(model, ui, &identifier),
     }
 }
 
-fn handle_session_created(model: &mut Model, name: String) -> Command {
-    sync_to_active_session(model);
+fn clear_workspace(model: &mut Model, ui: &mut UiState) -> Command {
+    model.tree = TreeModel::default();
+    model.search = SearchModel::default();
+    ui.filter_status = FilterStatus::Idle;
+    ui.sync_search_text(&model.search);
 
-    model.sessions.create_session(name);
-    model.tree = Default::default();
-    model.search = Default::default();
+    debug_assert_eq!(model.tree.load_status, LoadStatus::NotStarted);
 
-    let builder = CommandBuilder::new();
-    builder.build()
+    Command::batch(vec![Command::StopBackground, Command::CancelFilter])
 }
 
-fn handle_session_selected(model: &mut Model, _ui: &mut UiState, identifier: String) -> Command {
-    if model.sessions.active_identifier.as_ref() == Some(&identifier) {
+fn handle_created(model: &mut Model, ui: &mut UiState, name: String) -> Command {
+    model.flush_session();
+
+    let created = model.sessions.create_session(name);
+
+    debug_assert_eq!(model.sessions.active_identifier(), Some(created.as_str()));
+
+    clear_workspace(model, ui)
+}
+
+fn handle_deleted(model: &mut Model, ui: &mut UiState, identifier: String) -> Command {
+    let was_active = model.sessions.active_identifier() == Some(identifier.as_str());
+
+    if was_active {
+        model.flush_session();
+    }
+
+    let next = model.sessions.delete_session(&identifier);
+
+    let switch = match (was_active, next) {
+        (true, Some(identifier_next)) => switch_to(model, ui, &identifier_next),
+        (true, None) => clear_workspace(model, ui),
+        (false, _) => Command::None,
+    };
+
+    Command::batch(vec![Command::DeleteSessionData(identifier), switch])
+}
+
+fn handle_selected(model: &mut Model, ui: &mut UiState, identifier: &str) -> Command {
+    if model.sessions.active_identifier() == Some(identifier) {
         return Command::None;
     }
 
-    sync_to_active_session(model);
+    model.flush_session();
 
-    if let Some(session) = model.sessions.select_session(identifier.clone()) {
-        model.tree = session.tree_state.clone();
-        model.search = session.search_state.clone();
-
-        model.refresh_git_status();
-
-        let builder = CommandBuilder::new();
-        builder.build()
-    } else {
-        Command::None
-    }
-}
-
-fn handle_session_deleted(model: &mut Model, identifier: String) -> Command {
-    if model.sessions.active_identifier.as_deref() == Some(&identifier) {
-        sync_to_active_session(model);
-    }
-
-    if let Some(new_active_identifier) = model.sessions.delete_session(&identifier) {
-        if let Some(session) = model.sessions.sessions.get(&new_active_identifier) {
-            model.tree = session.tree_state.clone();
-            model.search = session.search_state.clone();
-
-            model.refresh_git_status();
-
-            let builder = CommandBuilder::new()
-                .add(Command::DeleteSessionData(identifier));
-
-            return builder.build();
-        }
-    } else {
-        model.tree = Default::default();
-        model.search = Default::default();
-    }
-
-    Command::DeleteSessionData(identifier)
-}
-
-fn handle_session_renamed(model: &mut Model, ui: &mut UiState, identifier: String, name: String) -> Command {
-    model.sessions.rename_session(&identifier, name);
-    ui.cancel_session_edit();
-
-    Command::None
-}
-
-fn handle_session_name_edited(ui: &mut UiState, name: String) -> Command {
-    ui.editing_session_name = name;
-    Command::None
-}
-
-fn handle_session_edit_started(model: &mut Model, ui: &mut UiState, identifier: String) -> Command {
-    if let Some(session) = model.sessions.sessions.get(&identifier) {
-        ui.start_session_edit(identifier, session.name.clone());
-    }
-
-    Command::None
-}
-
-fn handle_session_edit_cancelled(ui: &mut UiState) -> Command {
-    ui.cancel_session_edit();
-    Command::None
+    switch_to(model, ui, identifier)
 }

@@ -1,204 +1,401 @@
-use std::fs;
+use core::sync::atomic::{AtomicU64, Ordering};
+use std::fs::{self, File};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use ignore::WalkBuilder;
-use rayon::prelude::*;
+use git2::Repository;
+use rayon::iter::{IntoParallelRefIterator as _, ParallelIterator as _};
 
-use crate::app::state::search::{SearchCommand, ParsedQuery};
-use crate::model::error::SwarmResult;
+use crate::constants::OUTPUT_BYTES_MAX;
+use crate::model::error::{SwarmError, SwarmResult};
 use crate::model::options::Options;
-use crate::model::path::PathExtensions;
+use crate::model::output::OutputEntry;
+use crate::model::path;
+use crate::model::query::{ParsedQuery, SearchCommand};
+use crate::services::search::SearchScratch;
+use crate::services::tokens::estimate_tokens;
+use crate::services::tree::query::MatchContext;
 
-use super::filter::{GlobPathFilter, PathFilter};
+use super::filter::GlobPathFilter;
 use super::git::GitService;
+use super::walk::{WalkOptions, walk_files};
 
-#[derive(Clone, Debug)]
-pub struct GatherStats {
-    pub line_count: usize,
-    pub token_count: usize,
+struct Candidate {
+    path: PathBuf,
+    walked: bool,
 }
 
-#[derive(Clone)]
-pub struct GatherService;
+enum FileOutcome {
+    Entries(Vec<GatherEntry>),
+    Filtered,
+    Overflow,
+    Skipped,
+}
 
-impl GatherService {
-    pub fn new() -> Self {
-        Self
-    }
+struct GatherPlan<'plan> {
+    git: Option<&'plan GitService>,
+    include_diff: bool,
+    matcher: Option<MatchContext<'plan>>,
+}
 
-    pub fn gather(&self, paths: &[String], options: &Options) -> SwarmResult<(String, GatherStats)> {
-        self.gather_with_context(paths, options, None, None)
-    }
+struct GatherEntry {
+    content: String,
+    label: String,
+    path: PathBuf,
+}
 
-    pub fn gather_with_context(
-        &self,
-        paths: &[String],
-        options: &Options,
-        git_service: Option<&GitService>,
-        query: Option<&ParsedQuery>,
-    ) -> SwarmResult<(String, GatherStats)> {
-        let filter: Arc<dyn PathFilter> = Arc::new(GlobPathFilter::from_options(options)?);
-        let mut files = Vec::new();
+pub struct GatherRequest<'request> {
+    pub git: Option<&'request GitService>,
+    pub options: &'request Options,
+    pub paths: &'request [PathBuf],
+    pub query: Option<&'request ParsedQuery>,
+}
 
-        let include_diff = query.is_some_and(|q| q.has_command(SearchCommand::Diff));
+#[derive(Clone, Copy, Debug)]
+pub struct GatherStats {
+    pub lines: u64,
+    pub skipped: u32,
+    pub tokens: u64,
+}
 
-        for string_path in paths {
-            let path = Path::new(string_path.trim());
-            let clean_path = path.clean_path();
+struct WorkerState {
+    repository: Option<Repository>,
+    scratch: SearchScratch,
+}
 
-            if !clean_path.exists() {
-                continue;
-            }
-
-            if clean_path.is_file() {
-                if let Some(entries) = Self::read_and_process(&clean_path, git_service, include_diff) {
-                    files.extend(entries);
-                }
-            } else if clean_path.is_dir() {
-                Self::collect_directory(&clean_path, &mut files, &filter, git_service, include_diff)?;
-            }
-        }
-
-        let output_format = query
-            .and_then(|q| q.format_override)
-            .unwrap_or(options.output_format);
-
-        let output = output_format.format(&files)?;
-
-        let line_count = memchr::memchr_iter(b'\n', output.as_bytes()).count();
-        let token_count = estimate_tokens(&output);
-
-        let stats = GatherStats {
-            line_count,
-            token_count,
+impl WorkerState {
+    fn new(plan: &GatherPlan<'_>) -> Self {
+        let repository = if plan.include_diff {
+            plan.git.and_then(GitService::open_repository)
+        } else {
+            None
         };
 
-        Ok((output, stats))
-    }
-
-    fn read_and_process(
-        path: &Path,
-        git_service: Option<&GitService>,
-        include_diff: bool,
-    ) -> Option<Vec<(String, String)>> {
-        let current_content = fs::read_to_string(path).ok()?;
-        let mut entries = Vec::new();
-
-        if include_diff {
-            if let Some(git) = git_service {
-                let status = git.get_status(path);
-
-                if status.has_diff() {
-                    if let Some(original) = git.get_original_content(path) {
-                        entries.push((
-                            format!("{} (original)", path.display()),
-                            original,
-                        ));
-                        entries.push((
-                            format!("{} (modified)", path.display()),
-                            current_content,
-                        ));
-                        return Some(entries);
-                    }
-                }
-            }
+        Self {
+            repository,
+            scratch: SearchScratch::default(),
         }
-
-        entries.push((path.display().to_string(), current_content));
-        Some(entries)
     }
+}
 
-    fn collect_directory(
-        directory: &Path,
-        files: &mut Vec<(String, String)>,
-        filter: &Arc<dyn PathFilter>,
-        git_service: Option<&GitService>,
-        include_diff: bool,
-    ) -> SwarmResult<()> {
-        let paths = Self::walk_parallel(directory, filter);
+fn candidates_for(paths: &[PathBuf], options: &Options) -> SwarmResult<(Vec<Candidate>, u32)> {
+    let filter = GlobPathFilter::from_options(options)?;
+    let mut candidates = Vec::with_capacity(paths.len());
+    let mut skipped_count: u32 = 0;
 
-        let results: Vec<Vec<(String, String)>> = paths
-            .par_iter()
-            .filter_map(|path| Self::read_and_process(path, git_service, include_diff))
-            .collect();
+    for requested in paths {
+        let canonical = path::canonical(requested);
 
-        for batch in results {
-            files.extend(batch);
-        }
+        let Ok(metadata) = fs::metadata(&canonical) else {
+            skipped_count += 1;
 
-        Ok(())
-    }
+            continue;
+        };
 
-    fn walk_parallel(directory: &Path, filter: &Arc<dyn PathFilter>) -> Vec<PathBuf> {
-        let (sender, receiver) = std::sync::mpsc::channel::<PathBuf>();
-
-        WalkBuilder::new(directory)
-            .follow_links(false)
-            .hidden(false)
-            .ignore(false)
-            .git_global(false)
-            .git_exclude(false)
-            .require_git(false)
-            .build_parallel()
-            .run(|| {
-                let sender = sender.clone();
-                let filter = Arc::clone(filter);
-                let mut local: Vec<PathBuf> = Vec::new();
-
-                Box::new(move |result| {
-                    match result {
-                        Ok(entry) => {
-                            if !filter.should_include(entry.path()) {
-                                if entry.file_type().is_some_and(|type_file| type_file.is_dir()) {
-                                    if !local.is_empty() {
-                                        for path in local.drain(..) {
-                                            let _ = sender.send(path);
-                                        }
-                                    }
-                                    return ignore::WalkState::Skip;
-                                }
-                                return ignore::WalkState::Continue;
-                            }
-
-                            if entry.file_type().is_some_and(|type_file| type_file.is_file()) {
-                                local.push(entry.into_path());
-
-                                if local.len() >= 64 {
-                                    for path in local.drain(..) {
-                                        let _ = sender.send(path);
-                                    }
-                                }
-                            }
-
-                            ignore::WalkState::Continue
-                        }
-                        Err(_) => ignore::WalkState::Continue,
-                    }
-                })
+        if metadata.is_file() {
+            candidates.push(Candidate {
+                path: canonical,
+                walked: false,
             });
 
-        drop(sender);
-        receiver.iter().collect()
+            continue;
+        }
+
+        if !metadata.is_dir() {
+            skipped_count += 1;
+
+            continue;
+        }
+
+        let walked = walk_files(&canonical, &filter, WalkOptions::GATHER)?;
+
+        candidates.extend(
+            walked
+                .into_iter()
+                .map(|path| Candidate { path, walked: true }),
+        );
     }
+
+    debug_assert!(skipped_count as usize <= paths.len());
+
+    Ok((candidates, skipped_count))
 }
 
-impl Default for GatherService {
-    fn default() -> Self {
-        Self::new()
+fn entries_for(
+    candidate: &Candidate,
+    content: String,
+    plan: &GatherPlan<'_>,
+    repository: Option<&Repository>,
+) -> Vec<GatherEntry> {
+    let display = candidate.path.display();
+
+    if plan.include_diff {
+        if let Some(original) = original_for(&candidate.path, plan.git, repository) {
+            return vec![
+                GatherEntry {
+                    content: original,
+                    label: format!("{display} (original)"),
+                    path: candidate.path.clone(),
+                },
+                GatherEntry {
+                    content,
+                    label: format!("{display} (modified)"),
+                    path: candidate.path.clone(),
+                },
+            ];
+        }
     }
+
+    vec![GatherEntry {
+        content,
+        label: display.to_string(),
+        path: candidate.path.clone(),
+    }]
 }
 
-pub fn estimate_tokens(text: &str) -> usize {
-    if text.is_empty() {
-        return 0;
+pub fn gather(request: &GatherRequest<'_>) -> SwarmResult<(String, GatherStats)> {
+    let plan = GatherPlan {
+        git: request.git,
+        include_diff: request
+            .query
+            .is_some_and(|query| query.has_command(SearchCommand::Diff)),
+        matcher: request
+            .query
+            .filter(|query| !query.is_empty())
+            .map(|query| MatchContext::new(query, request.git)),
+    };
+
+    let (candidates, skipped_walk) = candidates_for(request.paths, request.options)?;
+    let budget = AtomicU64::new(0);
+
+    let outcomes: Vec<FileOutcome> = candidates
+        .par_iter()
+        .map_init(
+            || WorkerState::new(&plan),
+            |state, candidate| process(candidate, &plan, state, &budget),
+        )
+        .collect();
+
+    assert_eq!(outcomes.len(), candidates.len());
+
+    let (mut entries, skipped_read) = merge(outcomes)?;
+
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+
+    let formatted: Vec<OutputEntry> = entries
+        .into_iter()
+        .map(|entry| OutputEntry {
+            content: entry.content,
+            label: entry.label,
+        })
+        .collect();
+
+    let format = request
+        .query
+        .and_then(|query| query.format_override)
+        .unwrap_or(request.options.output_format);
+
+    let output = format.format(&formatted)?;
+
+    if output.len() as u64 > OUTPUT_BYTES_MAX {
+        return Err(output_overflow());
     }
 
-    let char_count = text.len();
-    let word_count = text.split_ascii_whitespace().count();
+    let stats = GatherStats {
+        lines: memchr::memchr_iter(b'\n', output.as_bytes()).count() as u64,
+        skipped: skipped_walk + skipped_read,
+        tokens: estimate_tokens(&output),
+    };
 
-    let char_estimate = char_count / 4;
-    let word_estimate = word_count * 13 / 10;
+    Ok((output, stats))
+}
 
-    (char_estimate + word_estimate) / 2
+fn merge(outcomes: Vec<FileOutcome>) -> SwarmResult<(Vec<GatherEntry>, u32)> {
+    let mut entries = Vec::with_capacity(outcomes.len());
+    let mut skipped_count: u32 = 0;
+
+    for outcome in outcomes {
+        match outcome {
+            FileOutcome::Entries(found) => entries.extend(found),
+            FileOutcome::Filtered => {}
+            FileOutcome::Overflow => return Err(output_overflow()),
+            FileOutcome::Skipped => skipped_count += 1,
+        }
+    }
+
+    Ok((entries, skipped_count))
+}
+
+fn original_for(
+    path: &Path,
+    git: Option<&GitService>,
+    repository: Option<&Repository>,
+) -> Option<String> {
+    let service = git?;
+
+    if !service.status(path).has_diff() {
+        return None;
+    }
+
+    service.original_content(repository?, path)
+}
+
+fn output_overflow() -> SwarmError {
+    SwarmError::Validation(format!(
+        "the selection holds more than {OUTPUT_BYTES_MAX} bytes; narrow it",
+    ))
+}
+
+fn process(
+    candidate: &Candidate,
+    plan: &GatherPlan<'_>,
+    state: &mut WorkerState,
+    budget: &AtomicU64,
+) -> FileOutcome {
+    if candidate.walked {
+        if let Some(matcher) = plan.matcher.as_ref() {
+            if !matcher.path_matches(&candidate.path, &mut state.scratch) {
+                return FileOutcome::Filtered;
+            }
+        }
+    }
+
+    let Ok(metadata) = fs::symlink_metadata(&candidate.path) else {
+        return FileOutcome::Skipped;
+    };
+
+    if !metadata.is_file() {
+        return FileOutcome::Filtered;
+    }
+
+    let Ok(file) = File::open(&candidate.path) else {
+        return FileOutcome::Skipped;
+    };
+
+    let size_bytes = metadata.len();
+    let reserved = budget.fetch_add(size_bytes, Ordering::Relaxed) + size_bytes;
+
+    if reserved > OUTPUT_BYTES_MAX {
+        return FileOutcome::Overflow;
+    }
+
+    let capacity = usize::try_from(size_bytes).expect("a budgeted file fits in memory");
+    let mut content = String::with_capacity(capacity);
+
+    if file.take(size_bytes).read_to_string(&mut content).is_err() {
+        return FileOutcome::Skipped;
+    }
+
+    let entries = entries_for(candidate, content, plan, state.repository.as_ref());
+
+    debug_assert_ne!(entries.len(), 0);
+
+    FileOutcome::Entries(entries)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TemporaryTree {
+        root: PathBuf,
+    }
+
+    impl TemporaryTree {
+        fn new(files: &[(&str, &str)]) -> Self {
+            let root = std::env::temp_dir().join(format!("swarm-gather-{}", uuid::Uuid::new_v4()));
+
+            fs::create_dir_all(&root).expect("the test directory is creatable");
+
+            for (name, content) in files {
+                fs::write(root.join(name), content).expect("the test file is writable");
+            }
+
+            Self { root }
+        }
+    }
+
+    impl Drop for TemporaryTree {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.root).expect("the test directory is removable");
+        }
+    }
+
+    fn sample() -> TemporaryTree {
+        TemporaryTree::new(&[("keep.toml", "alpha = 1\n"), ("drop.rs", "fn beta() {}\n")])
+    }
+
+    fn gather_with(paths: &[PathBuf], text: &str) -> (String, GatherStats) {
+        let query = ParsedQuery::parse(text);
+        let options = Options::default();
+
+        let request = GatherRequest {
+            git: None,
+            options: &options,
+            paths,
+            query: Some(&query),
+        };
+
+        gather(&request).expect("the gather succeeds")
+    }
+
+    #[test]
+    fn a_query_filters_the_walked_files() {
+        let tree = sample();
+        let (output, _) = gather_with(core::slice::from_ref(&tree.root), "ext:toml");
+
+        assert!(output.contains("alpha = 1"));
+        assert!(!output.contains("fn beta"));
+    }
+
+    #[test]
+    fn an_empty_query_gathers_every_file() {
+        let tree = sample();
+        let (output, _) = gather_with(core::slice::from_ref(&tree.root), "");
+
+        assert!(output.contains("alpha = 1"));
+        assert!(output.contains("fn beta"));
+    }
+
+    #[test]
+    fn a_query_leaves_an_explicitly_named_file_alone() {
+        let tree = sample();
+        let paths = [tree.root.join("keep.toml")];
+        let (output, stats) = gather_with(&paths, "ext:rs");
+
+        assert!(output.contains("alpha = 1"));
+        assert_eq!(stats.skipped, 0);
+    }
+
+    #[test]
+    fn a_content_query_reaches_into_the_files() {
+        let tree = sample();
+        let (output, _) = gather_with(core::slice::from_ref(&tree.root), "content:beta");
+
+        assert!(output.contains("fn beta"));
+        assert!(!output.contains("alpha = 1"));
+    }
+
+    #[test]
+    fn a_missing_path_is_counted_as_skipped() {
+        let tree = sample();
+        let paths = [tree.root.join("missing.rs"), tree.root.join("keep.toml")];
+        let (output, stats) = gather_with(&paths, "");
+
+        assert!(output.contains("alpha = 1"));
+        assert_eq!(stats.skipped, 1);
+    }
+
+    #[test]
+    fn entries_are_ordered_by_path() {
+        let tree = sample();
+        let (output, _) = gather_with(core::slice::from_ref(&tree.root), "");
+        let first = output.find("drop.rs").expect("the first file is present");
+
+        let second = output
+            .find("keep.toml")
+            .expect("the second file is present");
+
+        assert!(first < second);
+    }
 }

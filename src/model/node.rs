@@ -1,52 +1,53 @@
+use core::slice;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
 
-use rayon::prelude::*;
-use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::app::state::search::{FileMetadata, ParsedQuery, TypeFilter};
-use crate::model::options::Options;
-use crate::model::path::PathExtensions;
-use crate::services::filesystem::git::GitService;
-use crate::services::tree::traversal::Traversable;
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum NodeKind {
-    Directory,
-    File,
-}
+pub const TREE_DEPTH_MAX: u32 = 256;
+const STACK_CAPACITY: usize = 32;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct FileNode {
     pub checked: bool,
-    pub children: Vec<FileNode>,
+    pub children: Vec<Self>,
     pub kind: NodeKind,
+    #[serde(skip)]
+    pub load_failed: bool,
     pub loaded: bool,
     #[serde(skip)]
-    pub metadata: Option<FileMetadata>,
+    pub name: Box<str>,
     #[serde(skip)]
-    pub offset_name: u32,
+    pub name_lowercase: Box<str>,
     pub path: PathBuf,
-    #[serde(skip, default = "empty_lowercase_path")]
-    pub lowercase_path: Arc<str>,
-}
-
-fn empty_lowercase_path() -> Arc<str> {
-    static EMPTY: OnceLock<Arc<str>> = OnceLock::new();
-    EMPTY.get_or_init(|| Arc::from("")).clone()
-}
-
-fn compute_path_cache(path: &Path) -> (Arc<str>, u32) {
-    let lowercase_path = path.to_string_lossy().to_ascii_lowercase();
-    let byte_length_name = path.file_name()
-        .map(|n| n.to_string_lossy().len())
-        .unwrap_or(0);
-    let offset_name = (lowercase_path.len() - byte_length_name) as u32;
-    (Arc::from(lowercase_path), offset_name)
 }
 
 impl FileNode {
+    pub fn has_unloaded_directory(&self) -> bool {
+        if self.is_directory() {
+            if !self.loaded {
+                return true;
+            }
+        }
+
+        any(&self.children, |node| node.is_directory() && !node.loaded)
+    }
+
+    pub fn is_directory(&self) -> bool {
+        self.kind == NodeKind::Directory
+    }
+
+    pub fn is_file(&self) -> bool {
+        self.kind == NodeKind::File
+    }
+
+    pub fn is_selected(&self) -> bool {
+        if self.checked {
+            return true;
+        }
+
+        any(&self.children, |node| node.checked)
+    }
+
     pub fn new(path: PathBuf) -> Self {
         let kind = if path.is_dir() {
             NodeKind::Directory
@@ -54,357 +55,355 @@ impl FileNode {
             NodeKind::File
         };
 
-        let (lowercase_path, offset_name) = compute_path_cache(&path);
+        Self::with_kind(path, kind)
+    }
 
-        Self {
-            checked: false,
-            children: Vec::new(),
-            kind,
-            loaded: false,
-            metadata: None,
-            offset_name,
-            path,
-            lowercase_path,
-        }
+    pub fn recompute_name_cache(&mut self) {
+        let (name, name_lowercase) = names_from_path(&self.path);
+
+        self.name = name;
+        self.name_lowercase = name_lowercase;
+
+        debug_assert_eq!(self.name.len(), self.name_lowercase.len());
     }
 
     pub fn with_kind(path: PathBuf, kind: NodeKind) -> Self {
-        let (lowercase_path, offset_name) = compute_path_cache(&path);
+        let (name, name_lowercase) = names_from_path(&path);
+
+        debug_assert_eq!(name.len(), name_lowercase.len());
 
         Self {
             checked: false,
             children: Vec::new(),
             kind,
+            load_failed: false,
             loaded: false,
-            metadata: None,
-            offset_name,
+            name,
+            name_lowercase,
             path,
-            lowercase_path,
         }
-    }
-
-    pub fn builder() -> FileNodeBuilder {
-        FileNodeBuilder::default()
-    }
-
-    pub fn file_name(&self) -> Option<String> {
-        self.path.file_name_string()
-    }
-
-    pub fn name_lowercase(&self) -> &str {
-        &self.lowercase_path[self.offset_name as usize..]
-    }
-
-    pub fn has_children(&self) -> bool {
-        !self.children.is_empty()
-    }
-
-    pub fn is_directory(&self) -> bool {
-        matches!(self.kind, NodeKind::Directory)
-    }
-
-    pub fn is_file(&self) -> bool {
-        matches!(self.kind, NodeKind::File)
-    }
-
-    pub fn is_hidden(&self) -> bool {
-        self.path.is_hidden()
-    }
-
-    pub fn is_selected(&self) -> bool {
-        self.checked || self.children.iter().any(FileNode::is_selected)
-    }
-
-    pub fn is_fully_selected(&self) -> bool {
-        if !self.checked {
-            return false;
-        }
-        if self.is_directory() {
-            self.children.iter().all(FileNode::is_fully_selected)
-        } else {
-            true
-        }
-    }
-
-    pub fn lowercase_name(&self) -> String {
-        self.name_lowercase().to_owned()
-    }
-
-    pub fn collect_checkbox_states_recursive(&self, states: &mut FxHashMap<PathBuf, bool>) {
-        states.insert(self.path.clone(), self.checked);
-        for child in &self.children {
-            child.collect_checkbox_states_recursive(states);
-        }
-    }
-
-    pub fn restore_checkbox_states_recursive(&mut self, states: &FxHashMap<PathBuf, bool>) {
-        if let Some(&checked) = states.get(&self.path) {
-            self.checked = checked;
-        }
-        for child in &mut self.children {
-            child.restore_checkbox_states_recursive(states);
-        }
-    }
-
-    pub fn gather_checked_paths_recursive(&self, paths: &mut Vec<String>, query: &str) {
-        let parsed = ParsedQuery::parse(query);
-        self.gather_checked_paths_with_git(paths, &parsed, None);
-    }
-
-    pub fn gather_checked_paths_with_git(&self, paths: &mut Vec<String>, query: &ParsedQuery, git: Option<&GitService>) {
-        if !self.matches_query_with_git(query, git) {
-            return;
-        }
-
-        if self.checked {
-            match self.kind {
-                NodeKind::File => {
-                    paths.push(self.path.to_string_lossy().into_owned());
-                }
-                NodeKind::Directory => {
-                    for child in &self.children {
-                        child.gather_checked_paths_with_git(paths, query, git);
-                    }
-                }
-            }
-        } else {
-            for child in &self.children {
-                child.gather_checked_paths_with_git(paths, query, git);
-            }
-        }
-    }
-
-    pub fn matches_query_with_git(&self, query: &ParsedQuery, git: Option<&GitService>) -> bool {
-        self.matches_query_recursive(query, git, 0)
-    }
-
-    pub(crate) fn matches_query_recursive(&self, query: &ParsedQuery, git: Option<&GitService>, depth: usize) -> bool {
-        if query.is_empty() {
-            return true;
-        }
-
-        if self.is_directory() {
-            if query.has_depth_filter() && !query.matches_depth(depth) {
-                return false;
-            }
-
-            if matches!(query.filter_type, Some(TypeFilter::Directory)) {
-                let self_matches = query.matches_full(self.name_lowercase(), &self.lowercase_path, None, true, None);
-
-                let has_matching_children = self.children.iter().any(|child| {
-                    child.matches_query_recursive(query, git, depth + 1)
-                });
-
-                return self_matches || has_matching_children;
-            }
-
-            if query.requires_file_match() {
-                let has_matching_children = self.children.iter().any(|child| {
-                    child.matches_query_recursive(query, git, depth + 1)
-                });
-                return has_matching_children;
-            }
-
-            let has_matching_children = self.children.iter().any(|child| {
-                child.matches_query_recursive(query, git, depth + 1)
-            });
-
-            if has_matching_children {
-                return true;
-            }
-
-            return query.matches_full(self.name_lowercase(), &self.lowercase_path, None, true, None);
-        }
-
-        let git_status = git.map(|g| g.get_status(&self.path));
-        let metadata = self.get_metadata_for_query(query);
-
-        if !query.matches_full(self.name_lowercase(), &self.lowercase_path, git_status, false, metadata.as_ref()) {
-            return false;
-        }
-
-        if !query.patterns_content.is_empty() {
-            let matchers = crate::services::search::build_content_matchers(&query.patterns_content);
-
-            if !crate::services::search::content_matches(&self.path, &matchers) {
-                return false;
-            }
-        }
-
-        if !query.patterns_symbol.is_empty()
-            && !crate::services::search::symbol_matches(&self.path, &query.patterns_symbol)
-        {
-            return false;
-        }
-
-        true
-    }
-
-    fn get_metadata_for_query(&self, query: &ParsedQuery) -> Option<FileMetadata> {
-        if !query.needs_metadata() {
-            return None;
-        }
-
-        if let Some(ref cached) = self.metadata {
-            if query.needs_content() && cached.content.is_none() {
-                return FileMetadata::from_path(&self.path, true);
-            }
-
-            if query.needs_lines() && cached.lines.is_none() {
-                return FileMetadata::from_path_with_lines(&self.path);
-            }
-
-            return Some(cached.clone());
-        }
-
-        if query.needs_content() {
-            return FileMetadata::from_path(&self.path, true);
-        }
-
-        if query.needs_lines() {
-            return FileMetadata::from_path_with_lines(&self.path);
-        }
-
-        FileMetadata::from_path_basic(&self.path)
-    }
-
-    pub fn expand_all_checked(&mut self, options: &Options) {
-        if !self.is_selected() {
-            return;
-        }
-
-        if self.is_directory() {
-            if !self.loaded {
-                let _ = self.load_children(options);
-            }
-
-            for child in &mut self.children {
-                child.expand_all_checked(options);
-            }
-        }
-    }
-
-    pub fn filter_selected(&self, query: &str) -> Option<FileNode> {
-        let parsed = ParsedQuery::parse(query);
-        self.filter_selected_with_git(&parsed, None)
-    }
-
-    pub fn filter_selected_with_git(&self, query: &ParsedQuery, git: Option<&GitService>) -> Option<FileNode> {
-        if !self.matches_query_with_git(query, git) {
-            return None;
-        }
-
-        if !self.is_selected() {
-            return None;
-        }
-
-        let mut filtered = FileNode::builder()
-            .path(self.path.clone())
-            .checked(self.checked)
-            .loaded(self.loaded)
-            .build();
-
-        for child in &self.children {
-            if let Some(filtered_child) = child.filter_selected_with_git(query, git) {
-                filtered.children.push(filtered_child);
-            }
-        }
-
-        Some(filtered)
-    }
-
-    pub fn load_metadata(&mut self, include_lines: bool, include_content: bool) {
-        if self.is_directory() {
-            return;
-        }
-
-        if include_content {
-            self.metadata = FileMetadata::from_path(&self.path, true);
-        } else if include_lines {
-            self.metadata = FileMetadata::from_path_with_lines(&self.path);
-        } else {
-            self.metadata = FileMetadata::from_path_basic(&self.path);
-        }
-    }
-
-    pub fn load_metadata_recursive(&mut self, include_lines: bool, include_content: bool) {
-        self.load_metadata(include_lines, include_content);
-
-        for child in &mut self.children {
-            child.load_metadata_recursive(include_lines, include_content);
-        }
-    }
-
-    pub fn recompute_cache(&mut self) {
-        let (lowercase_path, offset_name) = compute_path_cache(&self.path);
-        self.lowercase_path = lowercase_path;
-        self.offset_name = offset_name;
-
-        self.children.par_iter_mut().for_each(|child| {
-            child.recompute_cache();
-        });
     }
 }
 
-#[derive(Default)]
-pub struct FileNodeBuilder {
-    checked: bool,
-    children: Vec<FileNode>,
-    kind: Option<NodeKind>,
-    loaded: bool,
-    metadata: Option<FileMetadata>,
-    path: Option<PathBuf>,
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum NodeKind {
+    Directory,
+    File,
 }
 
-impl FileNodeBuilder {
-    pub fn checked(mut self, checked: bool) -> Self {
-        self.checked = checked;
-        self
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Visit {
+    Descend,
+    Skip,
+    Stop,
+}
+
+pub fn any(nodes: &[FileNode], mut predicate: impl FnMut(&FileNode) -> bool) -> bool {
+    let mut found = false;
+
+    walk(nodes, |node, _| {
+        if predicate(node) {
+            found = true;
+
+            return Visit::Stop;
+        }
+
+        Visit::Descend
+    });
+
+    found
+}
+
+pub fn count_files(nodes: &[FileNode]) -> u32 {
+    let mut count: u32 = 0;
+
+    visit(nodes, |node, _| {
+        if node.is_file() {
+            count += 1;
+        }
+    });
+
+    count
+}
+
+pub fn depth_is_bounded(nodes: &[FileNode]) -> bool {
+    let mut bounded = true;
+
+    walk(nodes, |node, depth| {
+        if node.children.is_empty() {
+            return Visit::Skip;
+        }
+
+        if depth + 1 < TREE_DEPTH_MAX {
+            return Visit::Descend;
+        }
+
+        bounded = false;
+
+        Visit::Stop
+    });
+
+    bounded
+}
+
+fn names_from_path(path: &Path) -> (Box<str>, Box<str>) {
+    let name = path.file_name().map_or_else(
+        || path.to_string_lossy().into_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+
+    let name_lowercase = name.to_ascii_lowercase();
+
+    debug_assert_eq!(name_lowercase.len(), name.len());
+
+    (name.into_boxed_str(), name_lowercase.into_boxed_str())
+}
+
+pub fn visit(nodes: &[FileNode], mut visitor: impl FnMut(&FileNode, u32)) {
+    walk(nodes, |node, depth| {
+        visitor(node, depth);
+
+        Visit::Descend
+    });
+}
+
+pub fn visit_mut(nodes: &mut [FileNode], mut visitor: impl FnMut(&mut FileNode, u32)) {
+    walk_mut(nodes, |node, depth| {
+        visitor(node, depth);
+
+        Visit::Descend
+    });
+}
+
+pub fn walk(nodes: &[FileNode], mut visitor: impl FnMut(&FileNode, u32) -> Visit) {
+    let mut stack: Vec<slice::Iter<'_, FileNode>> = Vec::with_capacity(STACK_CAPACITY);
+    let mut depth: u32 = 0;
+
+    stack.push(nodes.iter());
+
+    while !stack.is_empty() {
+        debug_assert_eq!(stack.len(), depth as usize + 1);
+
+        let Some(node) = stack.last_mut().and_then(Iterator::next) else {
+            let _ = stack.pop();
+            depth = depth.saturating_sub(1);
+
+            continue;
+        };
+
+        match visitor(node, depth) {
+            Visit::Descend => {}
+            Visit::Skip => continue,
+            Visit::Stop => return,
+        }
+
+        if node.children.is_empty() {
+            continue;
+        }
+
+        assert!(depth + 1 < TREE_DEPTH_MAX);
+
+        stack.push(node.children.iter());
+        depth += 1;
+    }
+}
+
+pub fn walk_mut(nodes: &mut [FileNode], mut visitor: impl FnMut(&mut FileNode, u32) -> Visit) {
+    let mut stack: Vec<slice::IterMut<'_, FileNode>> = Vec::with_capacity(STACK_CAPACITY);
+    let mut depth: u32 = 0;
+
+    stack.push(nodes.iter_mut());
+
+    while !stack.is_empty() {
+        debug_assert_eq!(stack.len(), depth as usize + 1);
+
+        let Some(node) = stack.last_mut().and_then(Iterator::next) else {
+            let _ = stack.pop();
+            depth = depth.saturating_sub(1);
+
+            continue;
+        };
+
+        match visitor(node, depth) {
+            Visit::Descend => {}
+            Visit::Skip => continue,
+            Visit::Stop => return,
+        }
+
+        if node.children.is_empty() {
+            continue;
+        }
+
+        assert!(depth + 1 < TREE_DEPTH_MAX);
+
+        stack.push(node.children.iter_mut());
+        depth += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn directory(name: &str, children: Vec<FileNode>) -> FileNode {
+        let mut node = FileNode::with_kind(PathBuf::from(name), NodeKind::Directory);
+
+        node.children = children;
+        node.loaded = true;
+
+        node
     }
 
-    pub fn loaded(mut self, loaded: bool) -> Self {
-        self.loaded = loaded;
-        self
+    fn file(name: &str) -> FileNode {
+        FileNode::with_kind(PathBuf::from(name), NodeKind::File)
     }
 
-    pub fn metadata(mut self, metadata: Option<FileMetadata>) -> Self {
-        self.metadata = metadata;
-        self
+    fn sample() -> Vec<FileNode> {
+        vec![directory(
+            "root",
+            vec![
+                file("root/a.rs"),
+                directory("root/nested", vec![file("root/nested/b.rs")]),
+            ],
+        )]
     }
 
-    pub fn path(mut self, path: PathBuf) -> Self {
-        self.kind = Some(if path.is_dir() {
-            NodeKind::Directory
-        } else {
-            NodeKind::File
+    fn chain(length: u32) -> Vec<FileNode> {
+        let mut node = file("leaf");
+
+        for index in 0..length {
+            node = directory(&format!("level_{index}"), vec![node]);
+        }
+
+        vec![node]
+    }
+
+    #[test]
+    fn visit_reaches_every_node_once() {
+        let nodes = sample();
+        let mut count: u32 = 0;
+
+        visit(&nodes, |_, _| count += 1);
+
+        assert_eq!(count, 4);
+    }
+
+    #[test]
+    fn visit_reports_depth() {
+        let nodes = sample();
+        let mut depths = Vec::new();
+
+        visit(&nodes, |node, depth| {
+            depths.push((node.name.to_string(), depth));
         });
 
-        self.path = Some(path);
-        self
+        assert_eq!(depths[0], ("root".to_owned(), 0));
+        assert_eq!(depths[1], ("a.rs".to_owned(), 1));
+        assert_eq!(depths[3], ("b.rs".to_owned(), 2));
     }
 
-    pub fn build(self) -> FileNode {
-        let path = self.path.expect("Path is required for FileNode");
+    #[test]
+    fn walk_honours_skip() {
+        let nodes = sample();
+        let mut count: u32 = 0;
 
-        let kind = self.kind.unwrap_or_else(|| {
-            if path.is_dir() {
-                NodeKind::Directory
+        walk(&nodes, |_, depth| {
+            count += 1;
+
+            if depth < 1 {
+                Visit::Descend
             } else {
-                NodeKind::File
+                Visit::Skip
             }
         });
 
-        let (lowercase_path, offset_name) = compute_path_cache(&path);
+        assert_eq!(count, 3);
+    }
 
-        FileNode {
-            checked: self.checked,
-            children: self.children,
-            kind,
-            loaded: self.loaded,
-            metadata: self.metadata,
-            offset_name,
-            path,
-            lowercase_path,
-        }
+    #[test]
+    fn walk_honours_stop() {
+        let nodes = sample();
+        let mut count: u32 = 0;
+
+        walk(&nodes, |_, _| {
+            count += 1;
+
+            Visit::Stop
+        });
+
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn any_stops_at_the_first_match() {
+        let nodes = sample();
+        let mut visited: u32 = 0;
+
+        let found = any(&nodes, |node| {
+            visited += 1;
+
+            node.is_file()
+        });
+
+        assert!(found);
+        assert_eq!(visited, 2);
+    }
+
+    #[test]
+    fn any_reports_false_on_an_empty_forest() {
+        assert!(!any(&[], |_| true));
+    }
+
+    #[test]
+    fn files_are_counted() {
+        assert_eq!(count_files(&sample()), 2);
+        assert_eq!(count_files(&[]), 0);
+    }
+
+    #[test]
+    fn is_selected_sees_descendants() {
+        let mut nodes = sample();
+
+        assert!(!nodes[0].is_selected());
+
+        nodes[0].children[1].children[0].checked = true;
+
+        assert!(nodes[0].is_selected());
+    }
+
+    #[test]
+    fn unloaded_directories_are_detected() {
+        let mut nodes = sample();
+
+        assert!(!nodes[0].has_unloaded_directory());
+
+        nodes[0].children[1].loaded = false;
+
+        assert!(nodes[0].has_unloaded_directory());
+    }
+
+    #[test]
+    fn recompute_names_repopulates_skipped_caches() {
+        let mut nodes = sample();
+
+        visit_mut(&mut nodes, |node, _| {
+            node.name = Box::default();
+            node.name_lowercase = Box::default();
+        });
+
+        visit_mut(&mut nodes, |node, _| node.recompute_name_cache());
+
+        assert_eq!(&*nodes[0].name, "root");
+        assert_eq!(&*nodes[0].children[1].children[0].name_lowercase, "b.rs");
+    }
+
+    #[test]
+    fn depth_bound_accepts_a_tree_at_the_limit() {
+        assert!(depth_is_bounded(&chain(TREE_DEPTH_MAX - 1)));
+    }
+
+    #[test]
+    fn depth_bound_rejects_a_tree_past_the_limit() {
+        assert!(!depth_is_bounded(&chain(TREE_DEPTH_MAX)));
     }
 }

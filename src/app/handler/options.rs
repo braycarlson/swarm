@@ -1,148 +1,147 @@
-use std::sync::Arc;
+use alloc::sync::Arc;
 
-use crate::app::message::{Command, Options_};
-use crate::app::state::{Model, UiState};
+use crate::app::message::{Command, OptionsMessage};
+use crate::app::state::{LoadStatus, Model, UiState};
+use crate::constants::{UI_SCALE_MAX, UI_SCALE_MIN};
+use crate::model::options::Options;
+use crate::platform;
+use crate::services::worker::TreeRefreshRequest;
 
-pub fn handle(model: &mut Model, ui: &mut UiState, message: Options_) -> Command {
-    match message {
-        Options_::Opened => handle_options_opened(model, ui),
-        Options_::Closed => handle_options_closed(model, ui),
-        Options_::TabChanged(tab) => handle_options_tab_changed(ui, tab),
-        Options_::ThemeChanged(theme) => handle_option_theme_changed(model, ui, theme),
-        Options_::UiScaleApplied => handle_option_ui_scale_applied(model, ui),
-        Options_::UiScaleChanged(scale) => handle_option_ui_scale_changed(ui, scale),
-        Options_::UiScaleReset => handle_option_ui_scale_reset(model, ui),
-        Options_::UseIconChanged(value) => handle_option_use_icon_changed(model, value),
-        Options_::ShowHiddenChanged(value) => handle_option_show_hidden_changed(model, value),
-        Options_::DeleteSessionsChanged(value) => handle_option_delete_sessions_changed(model, value),
-        Options_::SingleInstanceChanged(value) => handle_option_single_instance_changed(model, value),
-        Options_::OutputFormatChanged(format) => handle_option_output_format_changed(model, format),
+pub fn commit_options(model: &mut Model, ui: &mut UiState, options: Options) {
+    if let Err(error) = model.update_options(options) {
+        ui.toast
+            .error(format!("The options were not applied: {error}"));
+
+        return;
+    }
+
+    if let Err(error) = model.options.save() {
+        ui.toast
+            .error(format!("Failed to save the options: {error}"));
     }
 }
 
-fn handle_options_opened(model: &mut Model, ui: &mut UiState) -> Command {
-    ui.options_show = true;
-    ui.ui_scale_draft = None;
-    model.save_original_options();
+pub fn handle(model: &mut Model, ui: &mut UiState, message: OptionsMessage) -> Command {
+    match message {
+        OptionsMessage::Closed => return handle_closed(model, ui),
+        OptionsMessage::ContextMenuRegisterRequested => handle_context_menu(ui, true),
+        OptionsMessage::ContextMenuUnregisterRequested => handle_context_menu(ui, false),
+        OptionsMessage::DeleteSessionsChanged(value) => {
+            update_option(model, ui, |options| options.delete_sessions_on_exit = value);
+        }
+        OptionsMessage::Opened => {
+            ui.options_show = true;
+            ui.ui_scale_draft = None;
+            model.save_original_options();
+        }
+        OptionsMessage::OutputFormatChanged(format) => {
+            update_option(model, ui, |options| options.output_format = format);
+        }
+        OptionsMessage::ShowHiddenChanged(value) => {
+            update_option(model, ui, |options| options.show_hidden = value);
+        }
+        OptionsMessage::SingleInstanceChanged(value) => {
+            update_option(model, ui, |options| options.single_instance = value);
+        }
+        OptionsMessage::TabChanged(tab) => ui.options_tab = tab,
+        OptionsMessage::ThemeChanged(theme) => {
+            ui.theme = theme;
+            ui.theme_dirty = true;
+            update_option(model, ui, |options| options.theme = theme);
+        }
+        OptionsMessage::UiScaleApplied => {
+            if let Some(scale) = ui.ui_scale_draft.take() {
+                update_option(model, ui, |options| {
+                    options.ui_scale = Some(clamp_scale(scale));
+                });
+            }
+        }
+        OptionsMessage::UiScaleChanged(scale) => ui.ui_scale_draft = Some(clamp_scale(scale)),
+        OptionsMessage::UiScaleReset => {
+            ui.ui_scale_draft = None;
+            update_option(model, ui, |options| options.ui_scale = None);
+        }
+        OptionsMessage::UseIconChanged(value) => {
+            update_option(model, ui, |options| options.use_icon = value);
+        }
+    }
 
     Command::None
 }
 
-fn handle_options_closed(model: &mut Model, ui: &mut UiState) -> Command {
+fn clamp_scale(scale: f32) -> f32 {
+    let clamped = if scale.is_finite() {
+        scale.clamp(UI_SCALE_MIN, UI_SCALE_MAX)
+    } else {
+        UI_SCALE_MIN
+    };
+
+    debug_assert!(clamped >= UI_SCALE_MIN);
+    debug_assert!(clamped <= UI_SCALE_MAX);
+
+    clamped
+}
+
+fn handle_closed(model: &mut Model, ui: &mut UiState) -> Command {
     ui.options_show = false;
 
     if let Some(scale) = ui.ui_scale_draft.take() {
-        let mut new_options = (*model.options).clone();
-        new_options.ui_scale = Some(scale.clamp(0.5, 3.0));
-
-        let _ = new_options.save();
-        model.update_options(new_options);
+        update_option(model, ui, |options| {
+            options.ui_scale = Some(clamp_scale(scale));
+        });
     }
 
-    if model.options_changed() {
-        model.tree.states = Some(model.tree.collect_checkbox_states());
+    if !model.options_changed() {
+        return Command::None;
+    }
 
-        Command::RefreshTree {
-            nodes: model.tree.nodes.clone(),
-            options: Arc::clone(&model.options),
-        }
+    let Some(session) = model.sessions.active_identifier().map(str::to_owned) else {
+        return Command::None;
+    };
+
+    if model.tree.nodes.is_empty() {
+        return Command::None;
+    }
+
+    if model.tree.is_loading() {
+        return Command::None;
+    }
+
+    model.tree.states = Some(model.tree.collect_checked_paths());
+    model.tree.load_status = LoadStatus::Loading("Applying the options...".to_owned());
+
+    let nodes = core::mem::take(&mut model.tree.nodes);
+
+    Command::batch(vec![
+        Command::StopBackground,
+        Command::RefreshTree(Box::new(TreeRefreshRequest {
+            filter: Arc::clone(&model.filter),
+            nodes,
+            session,
+        })),
+    ])
+}
+
+fn handle_context_menu(ui: &mut UiState, register: bool) {
+    let outcome = if register {
+        platform::context_menu_register()
     } else {
-        Command::None
+        platform::context_menu_unregister()
+    };
+
+    let action = if register { "register" } else { "unregister" };
+
+    match outcome {
+        Ok(()) => ui.toast.success(format!("Context menu {action}ed")),
+        Err(error) => ui
+            .toast
+            .error(format!("Failed to {action} the context menu: {error}")),
     }
 }
 
-fn handle_options_tab_changed(ui: &mut UiState, tab: crate::app::state::OptionsTab) -> Command {
-    ui.options_tab = tab;
-    Command::None
-}
+fn update_option(model: &mut Model, ui: &mut UiState, mutate: impl FnOnce(&mut Options)) {
+    let mut options = (*model.options).clone();
 
-fn handle_option_theme_changed(model: &mut Model, ui: &mut UiState, theme: crate::ui::themes::Theme) -> Command {
-    ui.theme = theme;
-
-    let mut new_options = (*model.options).clone();
-    new_options.theme = theme;
-
-    let _ = new_options.save();
-    model.update_options(new_options);
-
-    Command::None
-}
-
-fn handle_option_ui_scale_applied(model: &mut Model, ui: &mut UiState) -> Command {
-    if let Some(scale) = ui.ui_scale_draft.take() {
-        let mut new_options = (*model.options).clone();
-        new_options.ui_scale = Some(scale.clamp(0.5, 3.0));
-
-        let _ = new_options.save();
-        model.update_options(new_options);
-    }
-
-    Command::None
-}
-
-fn handle_option_ui_scale_changed(ui: &mut UiState, scale: f32) -> Command {
-    ui.ui_scale_draft = Some(scale.clamp(0.5, 3.0));
-    Command::None
-}
-
-fn handle_option_use_icon_changed(model: &mut Model, value: bool) -> Command {
-    let mut new_options = (*model.options).clone();
-    new_options.use_icon = value;
-
-    let _ = new_options.save();
-    model.update_options(new_options);
-
-    Command::None
-}
-
-fn handle_option_show_hidden_changed(model: &mut Model, value: bool) -> Command {
-    let mut new_options = (*model.options).clone();
-    new_options.show_hidden = value;
-
-    let _ = new_options.save();
-    model.update_options(new_options);
-
-    Command::None
-}
-
-fn handle_option_delete_sessions_changed(model: &mut Model, value: bool) -> Command {
-    let mut new_options = (*model.options).clone();
-    new_options.delete_sessions_on_exit = value;
-
-    let _ = new_options.save();
-    model.update_options(new_options);
-
-    Command::None
-}
-
-fn handle_option_single_instance_changed(model: &mut Model, value: bool) -> Command {
-    let mut new_options = (*model.options).clone();
-    new_options.single_instance = value;
-
-    let _ = new_options.save();
-    model.update_options(new_options);
-
-    Command::None
-}
-
-fn handle_option_output_format_changed(model: &mut Model, format: crate::model::output::OutputFormat) -> Command {
-    let mut new_options = (*model.options).clone();
-    new_options.output_format = format;
-
-    let _ = new_options.save();
-    model.update_options(new_options);
-
-    Command::None
-}
-
-fn handle_option_ui_scale_reset(model: &mut Model, ui: &mut UiState) -> Command {
-    ui.ui_scale_draft = None;
-
-    let mut new_options = (*model.options).clone();
-    new_options.ui_scale = None;
-
-    let _ = new_options.save();
-    model.update_options(new_options);
-
-    Command::None
+    mutate(&mut options);
+    commit_options(model, ui, options);
 }

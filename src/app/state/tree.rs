@@ -1,103 +1,128 @@
 use std::path::PathBuf;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 
-use crate::model::node::FileNode;
-use crate::services::filesystem::git::GitService;
+use crate::model::node::{self, FileNode};
+use crate::model::selection;
 
-use super::SearchModel;
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum LoadStatus {
+    Failed,
+    Loaded,
+    Loading(String),
+    #[default]
+    NotStarted,
+}
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 pub struct TreeModel {
-    pub nodes: Vec<FileNode>,
-    pub output: String,
+    #[serde(skip)]
+    pub background_loading: bool,
+    #[serde(skip)]
+    pub files_count: u32,
+    #[serde(skip)]
+    pub files_label: String,
+    #[serde(skip)]
     pub load_status: LoadStatus,
+    pub nodes: Vec<FileNode>,
     #[serde(skip)]
-    pub states: Option<FxHashMap<PathBuf, bool>>,
-    #[serde(skip)]
-    pub files_count: usize,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub enum LoadStatus {
-    NotStarted,
-    Loading { message: String, progress: (usize, usize) },
-    Loaded,
-    Failed(String),
-}
-
-impl Default for LoadStatus {
-    fn default() -> Self {
-        Self::NotStarted
-    }
+    pub states: Option<FxHashSet<PathBuf>>,
 }
 
 impl TreeModel {
-    pub fn new(paths: Vec<String>) -> Self {
-        let nodes = paths.into_iter()
-            .map(|p| FileNode::new(PathBuf::from(p)))
-            .collect();
+    pub fn collect_checked_paths(&self) -> FxHashSet<PathBuf> {
+        selection::collect_checked_paths(&self.nodes)
+    }
+
+    pub fn is_loading(&self) -> bool {
+        matches!(self.load_status, LoadStatus::Loading(_))
+    }
+
+    pub fn new(paths: Vec<PathBuf>) -> Self {
+        let nodes: Vec<FileNode> = paths.into_iter().map(FileNode::new).collect();
 
         Self {
-            nodes,
-            output: String::new(),
-            load_status: LoadStatus::NotStarted,
-            states: None,
+            background_loading: false,
             files_count: 0,
+            files_label: String::new(),
+            load_status: LoadStatus::NotStarted,
+            nodes,
+            states: None,
         }
     }
 
-    pub fn collect_checkbox_states(&self) -> FxHashMap<PathBuf, bool> {
-        let mut states = FxHashMap::default();
-        for node in &self.nodes {
-            node.collect_checkbox_states_recursive(&mut states);
-        }
-        states
+    pub fn replace_nodes(&mut self, nodes: Vec<FileNode>) {
+        let checked = self.collect_checked_paths();
+
+        self.nodes = nodes;
+
+        selection::restore_checked_paths(&mut self.nodes, &checked);
+        self.update_files_count();
     }
 
-    pub fn count_files(&self) -> usize {
-        self.nodes.iter().map(count_files_recursive).sum()
-    }
-
-    pub fn restore_checkbox_states(&mut self, states: &FxHashMap<PathBuf, bool>) {
-        for node in &mut self.nodes {
-            node.restore_checkbox_states_recursive(states);
-        }
-    }
-
-    pub fn gather_checked_paths(&self, search: &SearchModel) -> Vec<String> {
-        self.gather_checked_paths_with_git(search, None)
-    }
-
-    pub fn gather_checked_paths_with_git(&self, search: &SearchModel, git: Option<&GitService>) -> Vec<String> {
-        let mut results = Vec::new();
-        let query = search.parsed();
-
-        for node in &self.nodes {
-            node.gather_checked_paths_with_git(&mut results, &query, git);
-        }
-        results
-    }
-
-    pub fn create_filtered_tree(&self, search: &SearchModel) -> Vec<FileNode> {
-        self.create_filtered_tree_with_git(search, None)
-    }
-
-    pub fn create_filtered_tree_with_git(&self, search: &SearchModel, git: Option<&GitService>) -> Vec<FileNode> {
-        let query = search.parsed();
-        self.nodes.iter().filter_map(|n| n.filter_selected_with_git(&query, git)).collect()
+    pub fn restore_checked_paths(&mut self, paths: &FxHashSet<PathBuf>) {
+        selection::restore_checked_paths(&mut self.nodes, paths);
     }
 
     pub fn update_files_count(&mut self) {
-        self.files_count = self.count_files();
+        let count = node::count_files(&self.nodes);
+
+        if count == self.files_count {
+            if !self.files_label.is_empty() {
+                return;
+            }
+        }
+
+        self.files_count = count;
+        self.files_label = format!("{count} files");
     }
 }
 
-fn count_files_recursive(node: &FileNode) -> usize {
-    if node.is_file() {
-        1
-    } else {
-        node.children.iter().map(count_files_recursive).sum()
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::node::NodeKind;
+
+    fn tree() -> TreeModel {
+        let mut root = FileNode::with_kind(PathBuf::from("/root"), NodeKind::Directory);
+
+        root.children = vec![
+            FileNode::with_kind(PathBuf::from("/root/a.rs"), NodeKind::File),
+            FileNode::with_kind(PathBuf::from("/root/b.rs"), NodeKind::File),
+        ];
+
+        root.loaded = true;
+
+        let mut model = TreeModel::new(Vec::new());
+
+        model.nodes = vec![root];
+
+        model
+    }
+
+    #[test]
+    fn the_files_label_follows_the_count() {
+        let mut model = tree();
+
+        model.update_files_count();
+
+        assert_eq!(model.files_count, 2);
+        assert_eq!(model.files_label, "2 files");
+    }
+
+    #[test]
+    fn replacing_nodes_keeps_the_checked_state() {
+        let mut model = tree();
+
+        model.nodes[0].children[1].checked = true;
+
+        let fresh = tree().nodes;
+
+        model.replace_nodes(fresh);
+
+        assert!(model.nodes[0].children[1].checked);
+        assert!(!model.nodes[0].children[0].checked);
+        assert_eq!(model.files_count, 2);
     }
 }

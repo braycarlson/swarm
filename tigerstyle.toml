@@ -1,0 +1,17 @@
+extend_exclude = ["target/**", "xtask/target/**"]
+line-length-max = 100
+select = ["ALL"]
+
+ignore = [
+    "TS004",
+    "TS016",
+    "TS022",
+    "TS027",
+    "TS037",
+    "TS042",
+]
+
+[per-file-ignores]
+"src/bin/full.rs" = ["TS035"]
+"src/main.rs" = ["TS035"]
+"src/platform/**" = ["TS035"]

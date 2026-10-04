@@ -1,248 +1,152 @@
-use std::sync::mpsc::Sender;
-
 use eframe::egui;
 
-use crate::app::message::{Message, Preset_};
-use crate::app::state::{Model, UiState};
-use crate::ui::widget::titlebar::icon::{TitleIcon, draw_title_icon, hover_rectangle};
+use crate::app::message::{Message, MessageSender, PresetMessage};
+use crate::app::state::UiState;
+use crate::ui::widget::window::{Modal, focus_if_pending, render_centered, render_modal};
 
-pub fn render_save(context: &egui::Context, ui_state: &UiState, sender: &Sender<Message>) {
-    let center = context.content_rect().center();
-    let title_bar_height = 32.0;
-    let button_width = 46.0;
+const EMPTY_HEIGHT_PIXELS: f32 = 20.0;
+const LOAD_SIZE: [f32; 2] = [420.0, 300.0];
+const SAVE_SIZE: [f32; 2] = [420.0, 350.0];
 
-    egui::Window::new("save_preset")
-        .title_bar(false)
-        .resizable(false)
-        .fixed_size([420.0, 350.0])
-        .collapsible(false)
-        .pivot(egui::Align2::CENTER_CENTER)
-        .current_pos(center)
-        .show(context, |ui| {
-            let content_rect = ui.max_rect();
+pub fn render_load(context: &egui::Context, ui_state: &UiState, sender: &MessageSender) {
+    let dialog = Modal {
+        identifier: "load_preset",
+        size: LOAD_SIZE,
+        title: "Load Preset",
+    };
 
-            let title_rectangle = egui::Rect::from_min_size(
-                content_rect.min,
-                egui::vec2(content_rect.width(), title_bar_height),
-            );
+    let closed = render_modal(context, &dialog, |modal| {
+        modal.vertical(|column| render_load_list(column, ui_state, sender));
+    });
 
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), title_bar_height),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.set_min_height(title_bar_height);
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new("Save Preset").size(14.0));
-                }
-            );
+    if closed {
+        sender.send(Message::Preset(PresetMessage::LoadDialogClosed));
+    }
+}
 
-            let close_rectangle = egui::Rect::from_min_size(
-                title_rectangle.right_top() - egui::vec2(button_width, 0.0),
-                egui::vec2(button_width, title_bar_height),
-            );
+fn render_load_list(ui: &mut egui::Ui, ui_state: &UiState, sender: &MessageSender) {
+    let available_height = ui.available_height();
 
-            let close_response = ui.interact(
-                close_rectangle,
-                ui.id().with("save_preset_close"),
-                egui::Sense::click(),
-            );
+    egui::Frame::dark_canvas(ui.style())
+        .fill(ui.visuals().extreme_bg_color)
+        .inner_margin(8.0)
+        .stroke(egui::Stroke::NONE)
+        .show(ui, |content| {
+            content.set_min_height(available_height - 16.0);
 
-            if close_response.hovered() {
-                let painter = ui.painter().with_clip_rect(title_rectangle);
-                painter.rect_filled(
-                    hover_rectangle(close_rectangle, title_rectangle),
-                    0.0,
-                    egui::Color32::from_rgb(232, 17, 35),
-                );
+            if ui_state.preset_load_entries.is_empty() {
+                render_centered(content, EMPTY_HEIGHT_PIXELS, |centered| {
+                    centered.label("No presets available.");
+                });
+
+                return;
             }
 
-            {
-                let foreground = if close_response.hovered() {
-                    egui::Color32::WHITE
-                } else {
-                    ui.visuals().text_color()
-                };
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(content, |scroll| {
+                    for entry in &ui_state.preset_load_entries {
+                        let response = scroll.selectable_label(false, &entry.name);
 
-                let painter = ui.painter().with_clip_rect(title_rectangle);
-                draw_title_icon(&painter, close_rectangle, TitleIcon::Close, foreground);
-            }
+                        if response.clicked() {
+                            sender.send(Message::Preset(PresetMessage::Loaded(
+                                entry.identifier.clone(),
+                            )));
+                        }
 
-            if close_response.clicked() {
-                sender.send(Message::Preset(Preset_::SaveDialogClosed)).ok();
-            }
+                        response.context_menu(|menu| {
+                            if menu.button("Delete").clicked() {
+                                sender.send(Message::Preset(PresetMessage::Deleted(
+                                    entry.identifier.clone(),
+                                )));
 
-            ui.separator();
-
-            ui.vertical(|ui| {
-                ui.label("Preset name:");
-
-                let mut name = ui_state.preset_name.clone();
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut name)
-                        .desired_width(f32::INFINITY)
-                );
-
-                if response.changed() {
-                    sender.send(Message::Preset(Preset_::NameChanged(name.clone()))).ok();
-                }
-
-                response.request_focus();
-
-                ui.add_space(12.0);
-
-                let mut include_selection = ui_state.preset_include_selection;
-
-                if ui.checkbox(&mut include_selection, "Include selection").clicked() {
-                    sender.send(Message::Preset(Preset_::IncludeSelectionChanged(include_selection))).ok();
-                }
-
-                let mut include_search = ui_state.preset_include_search;
-
-                if ui.checkbox(&mut include_search, "Include search/filter").clicked() {
-                    sender.send(Message::Preset(Preset_::IncludeSearchChanged(include_search))).ok();
-                }
-
-                let mut generic = ui_state.preset_generic;
-
-                if ui.checkbox(&mut generic, "Generic (available in any project)").clicked() {
-                    sender.send(Message::Preset(Preset_::GenericChanged(generic))).ok();
-                }
-
-                ui.add_space(8.0);
-
-                ui.horizontal(|ui| {
-                    let can_save = !name.trim().is_empty()
-                        && (include_selection || include_search);
-
-                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-
-                    if ui.add_enabled(can_save, egui::Button::new("Save")).clicked()
-                        || (enter && can_save)
-                    {
-                        sender.send(Message::Preset(Preset_::Saved(name.trim().to_string()))).ok();
-                    }
-
-                    if ui.button("Cancel").clicked() {
-                        sender.send(Message::Preset(Preset_::SaveDialogClosed)).ok();
+                                menu.close();
+                            }
+                        });
                     }
                 });
-            });
         });
 }
 
-pub fn render_load(context: &egui::Context, model: &Model, sender: &Sender<Message>) {
-    let center = context.content_rect().center();
-    let title_bar_height = 32.0;
-    let button_width = 46.0;
+pub fn render_save(context: &egui::Context, ui_state: &mut UiState, sender: &MessageSender) {
+    let dialog = Modal {
+        identifier: "save_preset",
+        size: SAVE_SIZE,
+        title: "Save Preset",
+    };
 
-    let current_root = model.tree.nodes.first().map(|n| &n.path);
-    let presets = model.presets.list_for_root(current_root);
+    let closed = render_modal(context, &dialog, |modal| {
+        modal.vertical(|column| render_save_fields(column, ui_state, sender));
+    });
 
-    egui::Window::new("load_preset")
-        .title_bar(false)
-        .resizable(false)
-        .fixed_size([420.0, 300.0])
-        .collapsible(false)
-        .pivot(egui::Align2::CENTER_CENTER)
-        .current_pos(center)
-        .show(context, |ui| {
-            let content_rect = ui.max_rect();
+    if closed {
+        sender.send(Message::Preset(PresetMessage::SaveDialogClosed));
+    }
+}
 
-            let title_rectangle = egui::Rect::from_min_size(
-                content_rect.min,
-                egui::vec2(content_rect.width(), title_bar_height),
-            );
+fn render_save_fields(ui: &mut egui::Ui, ui_state: &mut UiState, sender: &MessageSender) {
+    ui.label("Preset name:");
 
-            ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), title_bar_height),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    ui.set_min_height(title_bar_height);
-                    ui.add_space(8.0);
-                    ui.label(egui::RichText::new("Load Preset").size(14.0));
-                }
-            );
+    let response =
+        ui.add(egui::TextEdit::singleline(&mut ui_state.preset_name).desired_width(f32::INFINITY));
 
-            let close_rectangle = egui::Rect::from_min_size(
-                title_rectangle.right_top() - egui::vec2(button_width, 0.0),
-                egui::vec2(button_width, title_bar_height),
-            );
+    focus_if_pending(&response, &mut ui_state.preset_name_focus);
 
-            let close_response = ui.interact(
-                close_rectangle,
-                ui.id().with("load_preset_close"),
-                egui::Sense::click(),
-            );
+    ui.add_space(12.0);
 
-            if close_response.hovered() {
-                let painter = ui.painter().with_clip_rect(title_rectangle);
-                painter.rect_filled(
-                    hover_rectangle(close_rectangle, title_rectangle),
-                    0.0,
-                    egui::Color32::from_rgb(232, 17, 35),
-                );
-            }
+    let mut include_selection = ui_state.preset_include_selection;
 
-            {
-                let foreground = if close_response.hovered() {
-                    egui::Color32::WHITE
-                } else {
-                    ui.visuals().text_color()
-                };
+    if ui
+        .checkbox(&mut include_selection, "Include selection")
+        .clicked()
+    {
+        sender.send(Message::Preset(PresetMessage::IncludeSelectionChanged(
+            include_selection,
+        )));
+    }
 
-                let painter = ui.painter().with_clip_rect(title_rectangle);
-                draw_title_icon(&painter, close_rectangle, TitleIcon::Close, foreground);
-            }
+    let mut include_search = ui_state.preset_include_search;
 
-            if close_response.clicked() {
-                sender.send(Message::Preset(Preset_::LoadDialogClosed)).ok();
-            }
+    if ui
+        .checkbox(&mut include_search, "Include search/filter")
+        .clicked()
+    {
+        sender.send(Message::Preset(PresetMessage::IncludeSearchChanged(
+            include_search,
+        )));
+    }
 
-            ui.separator();
+    let mut generic = ui_state.preset_generic;
 
-            ui.vertical(|ui| {
-                let available_height = ui.available_height();
+    if ui
+        .checkbox(&mut generic, "Generic (available in any project)")
+        .clicked()
+    {
+        sender.send(Message::Preset(PresetMessage::GenericChanged(generic)));
+    }
 
-                egui::Frame::dark_canvas(ui.style())
-                    .fill(ui.visuals().extreme_bg_color)
-                    .inner_margin(8.0)
-                    .stroke(egui::Stroke::NONE)
-                    .show(ui, |ui| {
-                        ui.set_min_height(available_height - 16.0);
+    ui.add_space(8.0);
 
-                        if presets.is_empty() {
-                            let available = ui.available_size();
+    let has_name = !ui_state.preset_name.trim().is_empty();
+    let can_save = has_name && (include_selection || include_search);
 
-                            ui.allocate_ui_with_layout(
-                                available,
-                                egui::Layout::top_down(egui::Align::Center),
-                                |ui| {
-                                    let space_above = (available.y - 20.0) / 2.0;
-                                    ui.add_space(space_above.max(0.0));
-                                    ui.label("No presets available.");
-                                }
-                            );
-                        } else {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    for preset in &presets {
-                                        let response = ui.selectable_label(false, &preset.name);
+    ui.horizontal(|row| {
+        let enter = row.input(|input| input.key_pressed(egui::Key::Enter));
 
-                                        if response.clicked() {
-                                            sender.send(Message::Preset(Preset_::Loaded(preset.identifier.clone()))).ok();
-                                        }
+        let clicked = row
+            .add_enabled(can_save, egui::Button::new("Save"))
+            .clicked();
 
-                                        response.context_menu(|ui| {
-                                            if ui.button("Delete").clicked() {
-                                                sender.send(Message::Preset(Preset_::Deleted(preset.identifier.clone()))).ok();
-                                                ui.close();
-                                            }
-                                        });
-                                    }
-                                });
-                        }
-                    });
-            });
-        });
+        let submitted = clicked || (enter && can_save);
+
+        if submitted {
+            let name = ui_state.preset_name.trim().to_owned();
+
+            sender.send(Message::Preset(PresetMessage::Saved(name)));
+        }
+
+        if row.button("Cancel").clicked() {
+            sender.send(Message::Preset(PresetMessage::SaveDialogClosed));
+        }
+    });
 }

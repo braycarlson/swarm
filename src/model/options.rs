@@ -1,514 +1,311 @@
 use std::fs;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 
+use globset::Glob;
 use serde::{Deserialize, Serialize};
 
-use crate::constants::APP_NAME;
+use crate::constants::{UI_SCALE_MAX, UI_SCALE_MIN};
 use crate::model::error::{SwarmError, SwarmResult};
 use crate::model::output::OutputFormat;
-use crate::ui::themes::Theme;
+use crate::model::storage;
+use crate::model::theme::Theme;
+
+const OPTIONS_FILE_NAME: &str = "options.toml";
+
+pub const EXCLUDE_PATTERNS_DEFAULT: &[&str] = &[
+    ".git",
+    ".svn",
+    ".hg",
+    ".bzr",
+    ".fossil",
+    "_darcs",
+    "target",
+    "build",
+    "dist",
+    "out",
+    "bin",
+    "obj",
+    "_build",
+    ".build",
+    "release",
+    "debug",
+    "Release",
+    "Debug",
+    "node_modules",
+    "bower_components",
+    "jspm_packages",
+    "vendor",
+    "packages",
+    ".bundle",
+    "deps",
+    "_deps",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytype",
+    ".tox",
+    "venv",
+    ".venv",
+    "env",
+    ".env",
+    "virtualenv",
+    ".virtualenv",
+    "ENV",
+    ".eggs",
+    "*.egg-info",
+    ".Python",
+    ".npm",
+    ".yarn",
+    ".pnp",
+    ".next",
+    ".nuxt",
+    ".cache",
+    ".parcel-cache",
+    ".turbo",
+    ".vercel",
+    ".docusaurus",
+    ".gradle",
+    ".mvn",
+    ".m2",
+    ".settings",
+    ".vs",
+    ".idea",
+    ".vscode",
+    ".vscode-test",
+    ".fleet",
+    ".eclipse",
+    "coverage",
+    ".coverage",
+    "htmlcov",
+    ".nyc_output",
+    "test-results",
+    "test-reports",
+    ".jest",
+    "_site",
+    ".terraform",
+    ".vagrant",
+    ".docker",
+    ".devcontainer",
+    ".history",
+    ".metals",
+    ".bloop",
+    "CMakeFiles",
+    "cmake-build-debug",
+    "cmake-build-release",
+    ".DS_Store",
+    "Thumbs.db",
+    "Desktop.ini",
+    "$RECYCLE.BIN",
+    "*.tmp",
+    "*.temp",
+    "*.swp",
+    "*.swo",
+    "*.old",
+    "*.orig",
+    "*.cache",
+    "*.log",
+    "*.jpg",
+    "*.jpeg",
+    "*.png",
+    "*.gif",
+    "*.bmp",
+    "*.svg",
+    "*.ico",
+    "*.webp",
+    "*.tiff",
+    "*.tif",
+    "*.psd",
+    "*.raw",
+    "*.heif",
+    "*.heic",
+    "*.indd",
+    "*.ai",
+    "*.eps",
+    "*.cr2",
+    "*.nef",
+    "*.orf",
+    "*.sr2",
+    "*.dng",
+    "*.mp4",
+    "*.avi",
+    "*.mov",
+    "*.wmv",
+    "*.flv",
+    "*.mkv",
+    "*.webm",
+    "*.m4v",
+    "*.mpg",
+    "*.mpeg",
+    "*.3gp",
+    "*.ogv",
+    "*.m2ts",
+    "*.mts",
+    "*.vob",
+    "*.mp3",
+    "*.wav",
+    "*.flac",
+    "*.aac",
+    "*.ogg",
+    "*.wma",
+    "*.m4a",
+    "*.opus",
+    "*.ape",
+    "*.alac",
+    "*.aiff",
+    "*.au",
+    "*.mid",
+    "*.midi",
+    "*.ra",
+    "*.rm",
+    "*.zip",
+    "*.tar",
+    "*.gz",
+    "*.rar",
+    "*.7z",
+    "*.bz2",
+    "*.xz",
+    "*.tgz",
+    "*.tbz2",
+    "*.lz",
+    "*.lzma",
+    "*.z",
+    "*.cab",
+    "*.iso",
+    "*.dmg",
+    "*.pkg",
+    "*.deb",
+    "*.rpm",
+    "*.apk",
+    "*.msi",
+    "*.exe",
+    "*.dll",
+    "*.so",
+    "*.dylib",
+    "*.lib",
+    "*.a",
+    "*.o",
+    "*.obj",
+    "*.pdb",
+    "*.class",
+    "*.jar",
+    "*.war",
+    "*.ear",
+    "*.bin",
+    "*.dat",
+    "*.app",
+    "*.com",
+    "*.sys",
+    "*.drv",
+    "*.res",
+    "*.db",
+    "*.sqlite",
+    "*.sqlite3",
+    "*.mdb",
+    "*.accdb",
+    "*.dbf",
+    "*.sdf",
+    "*.bak",
+    "*.db3",
+    "*.fdb",
+    "*.gdb",
+    "*.kdb",
+    "*.ttf",
+    "*.otf",
+    "*.woff",
+    "*.woff2",
+    "*.eot",
+    "*.fnt",
+    "*.fon",
+    "*.pfb",
+    "*.pfm",
+    "*.pdf",
+    "*.doc",
+    "*.docx",
+    "*.xls",
+    "*.xlsx",
+    "*.ppt",
+    "*.pptx",
+    "*.odt",
+    "*.ods",
+    "*.odp",
+    "*.pages",
+    "*.numbers",
+    "*.key",
+    "*.rtf",
+    "*.pyc",
+    "*.pyo",
+    "*.pyd",
+    "*.elc",
+    "*.rbc",
+    "*.beam",
+    "*.fasl",
+    "*.fbx",
+    "*.dae",
+    "*.3ds",
+    "*.blend",
+    "*.c4d",
+    "*.max",
+    "*.ma",
+    "*.mb",
+    "*.stl",
+    "*.ply",
+    "*.unity3d",
+    "*.unitypackage",
+    "*.asset",
+    "*.prefab",
+    "*.pak",
+    "*.vpk",
+    "*.wad",
+    "*.bsp",
+    "*.vdi",
+    "*.vmdk",
+    "*.vhd",
+    "*.vhdx",
+    "*.qcow2",
+    "*.img",
+    "*.toast",
+    "*.enc",
+    "*.gpg",
+    "*.aes",
+    "*.pgp",
+    "*.p12",
+    "*.pfx",
+    "*.keystore",
+    "*.crx",
+    "*.xpi",
+    "*.safariextz",
+    "*.ipa",
+    "*.aab",
+    "*.nupkg",
+    "*.snupkg",
+    "*.vsix",
+    "*.gem",
+    "*.whl",
+    "*.egg",
+];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Options {
     #[serde(default)]
     pub delete_sessions_on_exit: bool,
-
     #[serde(default = "exclude_patterns_default")]
     pub exclude: Vec<String>,
-
     #[serde(default)]
     pub include: Vec<String>,
-
     #[serde(default)]
     pub output_format: OutputFormat,
-
     #[serde(default)]
     pub show_hidden: bool,
-
     #[serde(default = "single_instance_default")]
     pub single_instance: bool,
-
     #[serde(default)]
     pub theme: Theme,
-
     #[serde(default)]
     pub ui_scale: Option<f32>,
-
     #[serde(default)]
     pub use_icon: bool,
-}
-
-fn exclude_patterns_default() -> Vec<String> {
-    vec![
-        // Version control
-        ".git".into(),
-        ".svn".into(),
-        ".hg".into(),
-        ".bzr".into(),
-        ".fossil".into(),
-        "_darcs".into(),
-
-        // Build outputs
-        "target".into(),
-        "build".into(),
-        "dist".into(),
-        "out".into(),
-        "bin".into(),
-        "obj".into(),
-        "_build".into(),
-        ".build".into(),
-        "release".into(),
-        "debug".into(),
-        "Release".into(),
-        "Debug".into(),
-
-        // Dependencies
-        "node_modules".into(),
-        "bower_components".into(),
-        "jspm_packages".into(),
-        "vendor".into(),
-        "packages".into(),
-        ".bundle".into(),
-        "deps".into(),
-        "_deps".into(),
-
-        // Python
-        "__pycache__".into(),
-        ".pytest_cache".into(),
-        ".mypy_cache".into(),
-        ".ruff_cache".into(),
-        ".pytype".into(),
-        ".tox".into(),
-        "venv".into(),
-        ".venv".into(),
-        "env".into(),
-        ".env".into(),
-        "virtualenv".into(),
-        ".virtualenv".into(),
-        "ENV".into(),
-        ".eggs".into(),
-        "*.egg-info".into(),
-        ".Python".into(),
-
-        // JavaScript / TypeScript
-        ".npm".into(),
-        ".yarn".into(),
-        ".pnp".into(),
-        ".next".into(),
-        ".nuxt".into(),
-        ".cache".into(),
-        ".parcel-cache".into(),
-        ".turbo".into(),
-        ".vercel".into(),
-        ".docusaurus".into(),
-
-        // Java / JVM
-        ".gradle".into(),
-        ".mvn".into(),
-        ".m2".into(),
-        ".settings".into(),
-
-        // .NET
-        ".vs".into(),
-
-        // IDEs and editors
-        ".idea".into(),
-        ".vscode".into(),
-        ".vscode-test".into(),
-        ".fleet".into(),
-        ".eclipse".into(),
-
-        // Testing and coverage
-        "coverage".into(),
-        ".coverage".into(),
-        "htmlcov".into(),
-        ".nyc_output".into(),
-        "test-results".into(),
-        "test-reports".into(),
-        ".jest".into(),
-
-        // Documentation build output
-        "_site".into(),
-
-        // Infrastructure
-        ".terraform".into(),
-        ".vagrant".into(),
-        ".docker".into(),
-        ".devcontainer".into(),
-
-        // Other dev artifacts
-        ".history".into(),
-        ".metals".into(),
-        ".bloop".into(),
-        "CMakeFiles".into(),
-        "cmake-build-debug".into(),
-        "cmake-build-release".into(),
-
-        // OS files
-        ".DS_Store".into(),
-        "Thumbs.db".into(),
-        "Desktop.ini".into(),
-        "$RECYCLE.BIN".into(),
-
-        // Temp and backup
-        "*.tmp".into(),
-        "*.temp".into(),
-        "*.swp".into(),
-        "*.swo".into(),
-        "*.old".into(),
-        "*.orig".into(),
-        "*.cache".into(),
-        "*.log".into(),
-
-        // Images
-        "*.jpg".into(),
-        "*.jpeg".into(),
-        "*.png".into(),
-        "*.gif".into(),
-        "*.bmp".into(),
-        "*.svg".into(),
-        "*.ico".into(),
-        "*.webp".into(),
-        "*.tiff".into(),
-        "*.tif".into(),
-        "*.psd".into(),
-        "*.raw".into(),
-        "*.heif".into(),
-        "*.heic".into(),
-        "*.indd".into(),
-        "*.ai".into(),
-        "*.eps".into(),
-        "*.cr2".into(),
-        "*.nef".into(),
-        "*.orf".into(),
-        "*.sr2".into(),
-        "*.dng".into(),
-
-        // Video
-        "*.mp4".into(),
-        "*.avi".into(),
-        "*.mov".into(),
-        "*.wmv".into(),
-        "*.flv".into(),
-        "*.mkv".into(),
-        "*.webm".into(),
-        "*.m4v".into(),
-        "*.mpg".into(),
-        "*.mpeg".into(),
-        "*.3gp".into(),
-        "*.ogv".into(),
-        "*.m2ts".into(),
-        "*.mts".into(),
-        "*.vob".into(),
-
-        // Audio
-        "*.mp3".into(),
-        "*.wav".into(),
-        "*.flac".into(),
-        "*.aac".into(),
-        "*.ogg".into(),
-        "*.wma".into(),
-        "*.m4a".into(),
-        "*.opus".into(),
-        "*.ape".into(),
-        "*.alac".into(),
-        "*.aiff".into(),
-        "*.au".into(),
-        "*.mid".into(),
-        "*.midi".into(),
-        "*.ra".into(),
-        "*.rm".into(),
-
-        // Archives
-        "*.zip".into(),
-        "*.tar".into(),
-        "*.gz".into(),
-        "*.rar".into(),
-        "*.7z".into(),
-        "*.bz2".into(),
-        "*.xz".into(),
-        "*.tgz".into(),
-        "*.tbz2".into(),
-        "*.lz".into(),
-        "*.lzma".into(),
-        "*.z".into(),
-        "*.cab".into(),
-        "*.iso".into(),
-        "*.dmg".into(),
-        "*.pkg".into(),
-        "*.deb".into(),
-        "*.rpm".into(),
-        "*.apk".into(),
-        "*.msi".into(),
-
-        // Executables and libraries
-        "*.exe".into(),
-        "*.dll".into(),
-        "*.so".into(),
-        "*.dylib".into(),
-        "*.lib".into(),
-        "*.a".into(),
-        "*.o".into(),
-        "*.obj".into(),
-        "*.pdb".into(),
-        "*.class".into(),
-        "*.jar".into(),
-        "*.war".into(),
-        "*.ear".into(),
-        "*.bin".into(),
-        "*.dat".into(),
-        "*.app".into(),
-        "*.com".into(),
-        "*.sys".into(),
-        "*.drv".into(),
-        "*.res".into(),
-
-        // Database
-        "*.db".into(),
-        "*.sqlite".into(),
-        "*.sqlite3".into(),
-        "*.mdb".into(),
-        "*.accdb".into(),
-        "*.dbf".into(),
-        "*.sdf".into(),
-        "*.bak".into(),
-        "*.db3".into(),
-        "*.fdb".into(),
-        "*.gdb".into(),
-        "*.kdb".into(),
-
-        // Fonts
-        "*.ttf".into(),
-        "*.otf".into(),
-        "*.woff".into(),
-        "*.woff2".into(),
-        "*.eot".into(),
-        "*.fnt".into(),
-        "*.fon".into(),
-        "*.pfb".into(),
-        "*.pfm".into(),
-
-        // Office documents
-        "*.pdf".into(),
-        "*.doc".into(),
-        "*.docx".into(),
-        "*.xls".into(),
-        "*.xlsx".into(),
-        "*.ppt".into(),
-        "*.pptx".into(),
-        "*.odt".into(),
-        "*.ods".into(),
-        "*.odp".into(),
-        "*.pages".into(),
-        "*.numbers".into(),
-        "*.key".into(),
-        "*.rtf".into(),
-
-        // Compiled / intermediate
-        "*.pyc".into(),
-        "*.pyo".into(),
-        "*.pyd".into(),
-        "*.elc".into(),
-        "*.rbc".into(),
-        "*.beam".into(),
-        "*.fasl".into(),
-
-        // 3D models
-        "*.fbx".into(),
-        "*.dae".into(),
-        "*.3ds".into(),
-        "*.blend".into(),
-        "*.c4d".into(),
-        "*.max".into(),
-        "*.ma".into(),
-        "*.mb".into(),
-        "*.stl".into(),
-        "*.ply".into(),
-
-        // Game assets
-        "*.unity3d".into(),
-        "*.unitypackage".into(),
-        "*.asset".into(),
-        "*.prefab".into(),
-        "*.pak".into(),
-        "*.vpk".into(),
-        "*.wad".into(),
-        "*.bsp".into(),
-
-        // VM / disk images
-        "*.vdi".into(),
-        "*.vmdk".into(),
-        "*.vhd".into(),
-        "*.vhdx".into(),
-        "*.qcow2".into(),
-        "*.img".into(),
-        "*.toast".into(),
-
-        // Encrypted
-        "*.enc".into(),
-        "*.gpg".into(),
-        "*.aes".into(),
-        "*.pgp".into(),
-        "*.p12".into(),
-        "*.pfx".into(),
-        "*.keystore".into(),
-
-        // Package formats
-        "*.crx".into(),
-        "*.xpi".into(),
-        "*.safariextz".into(),
-        "*.ipa".into(),
-        "*.aab".into(),
-        "*.nupkg".into(),
-        "*.snupkg".into(),
-        "*.vsix".into(),
-        "*.gem".into(),
-        "*.whl".into(),
-        "*.egg".into(),
-    ]
-}
-
-fn single_instance_default() -> bool {
-    true
-}
-
-pub fn calculate_default_ui_scale() -> f32 {
-    if let Some(scale) = detect_screen_scale() {
-        return scale;
-    }
-
-    1.3
-}
-
-pub fn calculate_ui_scale_for_position(x: f32, y: f32) -> f32 {
-    if let Some(scale) = detect_screen_scale_at_position(x as i32, y as i32) {
-        return scale;
-    }
-
-    calculate_default_ui_scale()
-}
-
-fn detect_screen_scale() -> Option<f32> {
-    #[cfg(target_os = "windows")]
-    {
-        use winapi::um::winuser::{GetSystemMetrics, SM_CYSCREEN};
-
-        let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
-
-        if height > 0 {
-            return Some(scale_for_height(height as u32));
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        use core_graphics::display::CGDisplay;
-
-        let display = CGDisplay::main();
-        let height = display.pixels_high() as u32;
-
-        if height > 0 {
-            return Some(scale_for_height(height));
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(output) = std::process::Command::new("xrandr")
-            .arg("--current")
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-
-            for line in stdout.lines() {
-                if line.contains('*') {
-                    if let Some(resolution) = line.split_whitespace().next() {
-                        if let Some(height_string) = resolution.split('x').nth(1) {
-                            if let Ok(height) = height_string.parse::<u32>() {
-                                return Some(scale_for_height(height));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn detect_screen_scale_at_position(x: i32, y: i32) -> Option<f32> {
-    #[cfg(target_os = "windows")]
-    {
-        use winapi::shared::windef::{HMONITOR, POINT, RECT};
-        use winapi::um::winuser::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST};
-
-        let point = POINT { x, y };
-        let monitor: HMONITOR = unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST) };
-
-        if !monitor.is_null() {
-            let mut monitor_information: MONITORINFO = unsafe { std::mem::zeroed() };
-            monitor_information.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-
-            if unsafe { GetMonitorInfoW(monitor, &mut monitor_information) } != 0 {
-                let rect: RECT = monitor_information.rcMonitor;
-                let height = (rect.bottom - rect.top) as u32;
-
-                if height > 0 {
-                    return Some(scale_for_height(height));
-                }
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        use core_graphics::display::CGDisplay;
-
-        let displays = CGDisplay::active_displays().ok()?;
-
-        for display_id in displays {
-            let display = CGDisplay::new(display_id);
-            let bounds = display.bounds();
-
-            let display_x = bounds.origin.x as i32;
-            let display_y = bounds.origin.y as i32;
-            let display_width = bounds.size.width as i32;
-            let display_height = bounds.size.height as i32;
-
-            if x >= display_x
-                && x < display_x + display_width
-                && y >= display_y
-                && y < display_y + display_height
-            {
-                return Some(scale_for_height(display_height as u32));
-            }
-        }
-
-        let main_display = CGDisplay::main();
-        return Some(scale_for_height(main_display.pixels_high() as u32));
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let _ = (x, y);
-    }
-
-    None
-}
-
-fn scale_for_height(height: u32) -> f32 {
-    match height {
-        0..=720 => 1.0,
-        721..=900 => 1.1,
-        901..=1080 => 1.3,
-        1081..=1200 => 1.4,
-        1201..=1440 => 1.6,
-        1441..=1600 => 1.8,
-        1601..=1800 => 2.0,
-        1801..=2160 => 2.2,
-        _ => 2.5,
-    }
 }
 
 impl Default for Options {
@@ -519,7 +316,7 @@ impl Default for Options {
             include: Vec::new(),
             output_format: OutputFormat::default(),
             show_hidden: false,
-            single_instance: true,
+            single_instance: single_instance_default(),
             theme: Theme::default(),
             ui_scale: None,
             use_icon: false,
@@ -528,116 +325,241 @@ impl Default for Options {
 }
 
 impl Options {
-    pub fn load() -> SwarmResult<Self> {
-        let path = Self::configuration_path()?;
+    fn configuration_path() -> SwarmResult<PathBuf> {
+        Ok(storage::application_directory()?.join(OPTIONS_FILE_NAME))
+    }
 
-        if !path.exists() {
-            return Ok(Self::default());
+    fn patterns_mut(&mut self, list: PatternList) -> &mut Vec<String> {
+        match list {
+            PatternList::Exclude => &mut self.exclude,
+            PatternList::Include => &mut self.include,
+        }
+    }
+
+    fn sanitize(&mut self) {
+        retain_valid_patterns(&mut self.exclude);
+        retain_valid_patterns(&mut self.include);
+
+        if self.exclude.is_empty() {
+            self.exclude = exclude_patterns_default();
         }
 
-        let content = fs::read_to_string(&path)?;
-        let mut options: Self = toml::from_str(&content)?;
+        if let Some(scale) = self.ui_scale {
+            if !(UI_SCALE_MIN..=UI_SCALE_MAX).contains(&scale) {
+                eprintln!("Ignoring the out-of-range UI scale {scale}");
 
-        if options.exclude.is_empty() {
-            options.exclude = exclude_patterns_default();
-        }
-
-        if let Some(scale) = options.ui_scale {
-            if scale < 0.5 || scale > 3.0 {
-                options.ui_scale = None;
+                self.ui_scale = None;
             }
         }
 
-        Ok(options)
+        debug_assert_ne!(self.exclude.len(), 0);
+        debug_assert!(self.ui_scale.is_none_or(|scale| scale.is_finite()));
     }
 
-    pub fn save(&self) -> SwarmResult<()> {
-        let path = Self::configuration_path()?;
+    pub fn add_pattern(&mut self, list: PatternList, pattern: &str) -> SwarmResult<()> {
+        let trimmed = pattern.trim();
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+        if trimmed.is_empty() {
+            return Err(SwarmError::Validation("the pattern is empty".to_owned()));
         }
 
-        let content = toml::to_string_pretty(self)?;
-        fs::write(&path, content)?;
+        validate_pattern(trimmed)?;
+
+        let patterns = self.patterns_mut(list);
+        let patterns_length_before = patterns.len();
+
+        patterns.push(trimmed.to_owned());
+
+        debug_assert_eq!(patterns.len(), patterns_length_before + 1);
 
         Ok(())
     }
 
-    pub fn effective_ui_scale(&self) -> f32 {
-        self.ui_scale.unwrap_or_else(calculate_default_ui_scale)
+    pub fn load() -> SwarmResult<Self> {
+        let path = Self::configuration_path()?;
+
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Self::default()),
+            Err(error) => return Err(error.into()),
+        };
+
+        let mut options: Self = toml::from_str(&content)?;
+
+        options.sanitize();
+
+        Ok(options)
     }
 
-    pub fn effective_ui_scale_at_position(&self, x: f32, y: f32) -> f32 {
-        self.ui_scale.unwrap_or_else(|| calculate_ui_scale_for_position(x, y))
+    pub fn load_or_default() -> Self {
+        match Self::load() {
+            Ok(options) => options,
+            Err(error) => {
+                eprintln!("Falling back to the default options: {error}");
+
+                Self::default()
+            }
+        }
     }
 
-    pub fn add_exclude_filter(&mut self, filter: String) -> bool {
-        if filter.is_empty() {
+    pub fn patterns(&self, list: PatternList) -> &[String] {
+        match list {
+            PatternList::Exclude => &self.exclude,
+            PatternList::Include => &self.include,
+        }
+    }
+
+    pub fn remove_pattern(&mut self, list: PatternList, index: usize) -> bool {
+        let patterns = self.patterns_mut(list);
+
+        if index >= patterns.len() {
             return false;
         }
 
-        self.exclude.push(filter);
-        let _ = self.save();
-        true
-    }
+        let patterns_length_before = patterns.len();
+        let removed = patterns.remove(index);
 
-    pub fn add_include_filter(&mut self, filter: String) -> bool {
-        if filter.is_empty() {
-            return false;
-        }
-
-        self.include.push(filter);
-        let _ = self.save();
-        true
-    }
-
-    pub fn clear_includes(&mut self) {
-        self.include.clear();
-        let _ = self.save();
-    }
-
-    pub fn is_equal(&self, other: &Self) -> bool {
-        self.delete_sessions_on_exit == other.delete_sessions_on_exit
-            && self.exclude == other.exclude
-            && self.include == other.include
-            && self.output_format == other.output_format
-            && self.show_hidden == other.show_hidden
-            && self.single_instance == other.single_instance
-            && self.theme == other.theme
-            && self.ui_scale == other.ui_scale
-            && self.use_icon == other.use_icon
-    }
-
-    pub fn remove_exclude_filter(&mut self, index: usize) -> bool {
-        if index >= self.exclude.len() {
-            return false;
-        }
-
-        self.exclude.remove(index);
-        let _ = self.save();
-        true
-    }
-
-    pub fn remove_include_filter(&mut self, index: usize) -> bool {
-        if index >= self.include.len() {
-            return false;
-        }
-
-        self.include.remove(index);
-        let _ = self.save();
+        debug_assert_ne!(removed, "");
+        debug_assert_eq!(patterns.len() + 1, patterns_length_before);
 
         true
     }
 
-    pub fn reset_excludes_to_defaults(&mut self) {
-        self.exclude = exclude_patterns_default();
-        let _ = self.save();
+    pub fn reset_patterns(&mut self, list: PatternList) {
+        match list {
+            PatternList::Exclude => self.exclude = exclude_patterns_default(),
+            PatternList::Include => self.include.clear(),
+        }
+
+        debug_assert_ne!(self.exclude.len(), 0);
     }
 
-    fn configuration_path() -> SwarmResult<PathBuf> {
-        dirs::data_local_dir()
-            .map(|directory| directory.join(APP_NAME.to_lowercase()).join("options.toml"))
-            .ok_or_else(|| SwarmError::Config("Unable to determine configuration path".into()))
+    pub fn save(&self) -> SwarmResult<()> {
+        let path = Self::configuration_path()?;
+        let content = toml::to_string_pretty(self)?;
+
+        assert_ne!(content, "");
+
+        storage::write_atomic(&path, content.as_bytes())
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PatternList {
+    Exclude,
+    Include,
+}
+
+fn exclude_patterns_default() -> Vec<String> {
+    let patterns: Vec<String> = EXCLUDE_PATTERNS_DEFAULT
+        .iter()
+        .map(|pattern| (*pattern).to_owned())
+        .collect();
+
+    debug_assert_eq!(patterns.len(), EXCLUDE_PATTERNS_DEFAULT.len());
+
+    patterns
+}
+
+fn retain_valid_patterns(patterns: &mut Vec<String>) {
+    patterns.retain(|pattern| match validate_pattern(pattern) {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!("Ignoring the pattern '{pattern}': {error}");
+
+            false
+        }
+    });
+}
+
+fn single_instance_default() -> bool {
+    true
+}
+
+pub fn validate_pattern(pattern: &str) -> SwarmResult<()> {
+    match Glob::new(pattern) {
+        Ok(_) => Ok(()),
+        Err(error) => Err(SwarmError::Parse(
+            format!("Invalid glob pattern '{pattern}': {error}"),
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_excludes_match_the_pattern_table() {
+        let options = Options::default();
+
+        assert_eq!(options.exclude.len(), EXCLUDE_PATTERNS_DEFAULT.len());
+
+        assert_eq!(
+            options.exclude.first().map(String::as_str),
+            EXCLUDE_PATTERNS_DEFAULT.first().copied(),
+        );
+    }
+
+    #[test]
+    fn every_default_exclude_pattern_compiles() {
+        for pattern in EXCLUDE_PATTERNS_DEFAULT {
+            assert!(validate_pattern(pattern).is_ok(), "the default pattern {pattern} is invalid");
+        }
+    }
+
+    #[test]
+    fn patterns_reject_out_of_range_indices() {
+        let mut options = Options::default();
+        let length = options.exclude.len();
+
+        assert!(!options.remove_pattern(PatternList::Exclude, length));
+        assert!(!options.remove_pattern(PatternList::Include, 0));
+        assert_eq!(options.exclude.len(), length);
+    }
+
+    #[test]
+    fn empty_and_invalid_patterns_are_rejected() {
+        let mut options = Options::default();
+
+        assert!(options.add_pattern(PatternList::Include, "   ").is_err());
+        assert!(options.add_pattern(PatternList::Include, "a[").is_err());
+        assert_eq!(options.include, Vec::<String>::new());
+        assert!(options.add_pattern(PatternList::Include, " *.rs ").is_ok());
+        assert_eq!(options.include, vec!["*.rs".to_owned()]);
+    }
+
+    #[test]
+    fn sanitizing_drops_invalid_state() {
+        let mut options = Options {
+            delete_sessions_on_exit: false,
+            exclude: vec!["a[".to_owned()],
+            include: vec!["*.rs".to_owned(), "b[".to_owned()],
+            output_format: OutputFormat::default(),
+            show_hidden: false,
+            single_instance: true,
+            theme: Theme::default(),
+            ui_scale: Some(f32::NAN),
+            use_icon: false,
+        };
+
+        options.sanitize();
+
+        assert_eq!(options.exclude.len(), EXCLUDE_PATTERNS_DEFAULT.len());
+        assert_eq!(options.include, vec!["*.rs".to_owned()]);
+        assert_eq!(options.ui_scale, None);
+    }
+
+    #[test]
+    fn resetting_restores_each_list() {
+        let mut options = Options::default();
+
+        options.exclude.clear();
+        options.include.push("*.rs".to_owned());
+        options.reset_patterns(PatternList::Exclude);
+        options.reset_patterns(PatternList::Include);
+
+        assert_eq!(options.exclude.len(), EXCLUDE_PATTERNS_DEFAULT.len());
+        assert_eq!(options.include, Vec::<String>::new());
     }
 }

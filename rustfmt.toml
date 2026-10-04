@@ -1,0 +1,28 @@
+edition = "2024"
+format_macro_bodies = false
+format_strings = true
+hard_tabs = false
+imports_layout = "HorizontalVertical"
+max_width = 100
+short_array_element_width_threshold = 0
+skip_macro_invocations = [
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "eprint",
+    "eprintln",
+    "format",
+    "format_args",
+    "panic",
+    "print",
+    "println",
+    "todo",
+    "unreachable",
+    "write",
+    "writeln",
+]
+style_edition = "2024"
+tab_spaces = 4

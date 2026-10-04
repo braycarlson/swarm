@@ -1,132 +1,53 @@
-use std::path::{Path, PathBuf};
+use alloc::sync::Arc;
+use std::path::{MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path, PathBuf};
 
 use git2::{Repository, Status, StatusOptions};
 use rustc_hash::FxHashMap;
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum GitStatus {
-    #[default]
-    Unmodified,
-    Added,
-    Conflicted,
-    Deleted,
-    Modified,
-    Renamed,
-    Staged,
-    Untracked,
-}
+use crate::model::git::GitStatus;
 
-impl GitStatus {
-    pub fn has_diff(&self) -> bool {
-        matches!(self, Self::Modified | Self::Added | Self::Staged | Self::Renamed)
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct GitService {
-    statuses: FxHashMap<PathBuf, GitStatus>,
-    repository_root: Option<PathBuf>,
-}
-
-impl Default for GitService {
-    fn default() -> Self {
-        Self::new()
-    }
+    repository_root: Option<Arc<Path>>,
+    statuses: Arc<FxHashMap<PathBuf, GitStatus>>,
 }
 
 impl GitService {
-    pub fn new() -> Self {
-        Self {
-            statuses: FxHashMap::default(),
-            repository_root: None,
+    fn convert_status(status: Status) -> GitStatus {
+        if status.contains(Status::CONFLICTED) {
+            return GitStatus::Conflicted;
         }
-    }
 
-    pub fn refresh(&mut self, path: &Path) {
-        self.statuses.clear();
-        self.repository_root = None;
-
-        let repo = match Self::find_repo(path) {
-            Some(r) => r,
-            None => return,
-        };
-
-        let working_directory = match repo.workdir() {
-            Some(w) => match dunce::canonicalize(w) {
-                Ok(c) => c,
-                Err(_) => w.to_path_buf(),
-            },
-            None => return,
-        };
-
-        self.repository_root = Some(working_directory.clone());
-
-        let mut status_options = StatusOptions::new();
-
-        status_options.include_untracked(true)
-            .recurse_untracked_dirs(true)
-            .include_ignored(false);
-
-        let statuses = match repo.statuses(Some(&mut status_options)) {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-        for entry in statuses.iter() {
-            let status = entry.status();
-            let git_status = Self::convert_status(status);
-
-            if git_status == GitStatus::Unmodified {
-                continue;
-            }
-
-            if let Some(entry_path) = entry.path() {
-                let normalized = entry_path.replace('/', std::path::MAIN_SEPARATOR_STR);
-                let full_path = working_directory.join(&normalized);
-                self.statuses.insert(full_path, git_status);
-            }
+        if status.contains(Status::INDEX_NEW) {
+            return GitStatus::Added;
         }
-    }
 
-    pub fn get_status(&self, path: &Path) -> GitStatus {
-        if let Some(status) = self.statuses.get(path) {
-            return *status;
+        if status
+            .intersects(Status::INDEX_MODIFIED | Status::INDEX_RENAMED | Status::INDEX_TYPECHANGE)
+        {
+            return GitStatus::Staged;
+        }
+
+        if status.contains(Status::WT_NEW) {
+            return GitStatus::Untracked;
+        }
+
+        if status.intersects(Status::WT_MODIFIED | Status::WT_TYPECHANGE) {
+            return GitStatus::Modified;
+        }
+
+        if status.intersects(Status::INDEX_DELETED | Status::WT_DELETED) {
+            return GitStatus::Deleted;
+        }
+
+        if status.contains(Status::WT_RENAMED) {
+            return GitStatus::Renamed;
         }
 
         GitStatus::Unmodified
     }
 
-    pub fn get_original_content(&self, path: &Path) -> Option<String> {
-        let repository_root = self.repository_root.as_ref()?;
-        let repo = Repository::open(repository_root).ok()?;
-
-        let canonical = dunce::canonicalize(path).ok()?;
-        let relative_path = canonical.strip_prefix(repository_root).ok()?;
-        let relative_string = relative_path.to_str()?;
-
-        let relative_unix = relative_string.replace('\\', "/");
-
-        let head = repo.head().ok()?;
-        let tree = head.peel_to_tree().ok()?;
-        let entry = tree.get_path(Path::new(&relative_unix)).ok()?;
-        let blob = repo.find_blob(entry.id()).ok()?;
-
-        if blob.is_binary() {
-            return None;
-        }
-
-        String::from_utf8(blob.content().to_vec()).ok()
-    }
-
-    pub fn is_in_repo(&self) -> bool {
-        self.repository_root.is_some()
-    }
-
-    pub fn has_changes(&self) -> bool {
-        self.statuses.values().any(|s| s.has_diff())
-    }
-
-    fn find_repo(path: &Path) -> Option<Repository> {
+    fn find_repository(path: &Path) -> Option<Repository> {
         let canonical = dunce::canonicalize(path).ok()?;
 
         let start = if canonical.is_file() {
@@ -138,38 +59,118 @@ impl GitService {
         Repository::discover(start).ok()
     }
 
-    fn convert_status(status: Status) -> GitStatus {
-        if status.contains(Status::CONFLICTED) {
-            return GitStatus::Conflicted;
+    fn full_path(root: &Path, relative: &str) -> PathBuf {
+        if MAIN_SEPARATOR == '/' {
+            return root.join(relative);
         }
 
-        if status.contains(Status::INDEX_NEW) {
-            return GitStatus::Staged;
+        root.join(relative.replace('/', MAIN_SEPARATOR_STR))
+    }
+
+    pub fn open_repository(&self) -> Option<Repository> {
+        Repository::open(self.repository_root.as_deref()?).ok()
+    }
+
+    pub fn original_content(&self, repository: &Repository, path: &Path) -> Option<String> {
+        let root = self.repository_root.as_deref()?;
+        let canonical = dunce::canonicalize(path).ok()?;
+        let relative = canonical.strip_prefix(root).ok()?;
+
+        debug_assert!(relative.is_relative());
+
+        let relative_text = relative.to_str()?.replace('\\', "/");
+        let head = repository.head().ok()?;
+        let tree = head.peel_to_tree().ok()?;
+        let entry = tree.get_path(Path::new(&relative_text)).ok()?;
+        let blob = repository.find_blob(entry.id()).ok()?;
+
+        if blob.is_binary() {
+            return None;
         }
 
-        if status.contains(Status::INDEX_MODIFIED)
-            || status.contains(Status::INDEX_RENAMED)
-            || status.contains(Status::INDEX_TYPECHANGE)
-        {
-            return GitStatus::Staged;
+        String::from_utf8(blob.content().to_vec()).ok()
+    }
+
+    pub fn refresh(&mut self, path: &Path) {
+        self.repository_root = None;
+        self.statuses = Arc::default();
+
+        let Some(repository) = Self::find_repository(path) else {
+            return;
+        };
+
+        let Some(workdir) = repository.workdir() else {
+            return;
+        };
+
+        let root = dunce::canonicalize(workdir).unwrap_or_else(|_| workdir.to_path_buf());
+        let mut options = StatusOptions::new();
+
+        options
+            .exclude_submodules(true)
+            .include_ignored(false)
+            .include_untracked(true)
+            .recurse_untracked_dirs(true);
+
+        let Ok(entries) = repository.statuses(Some(&mut options)) else {
+            self.repository_root = Some(Arc::from(root));
+
+            return;
+        };
+
+        let mut statuses = FxHashMap::default();
+
+        for entry in entries.iter() {
+            let status = Self::convert_status(entry.status());
+
+            if status == GitStatus::Unmodified {
+                continue;
+            }
+
+            let Some(relative) = entry.path() else {
+                continue;
+            };
+
+            let replaced = statuses.insert(Self::full_path(&root, relative), status);
+
+            debug_assert!(replaced.is_none());
         }
 
-        if status.contains(Status::WT_NEW) {
-            return GitStatus::Untracked;
-        }
+        debug_assert!(statuses.values().all(|status| *status != GitStatus::Unmodified));
 
-        if status.contains(Status::WT_MODIFIED) || status.contains(Status::WT_TYPECHANGE) {
-            return GitStatus::Modified;
-        }
+        self.repository_root = Some(Arc::from(root));
+        self.statuses = Arc::new(statuses);
+    }
 
-        if status.contains(Status::WT_DELETED) || status.contains(Status::INDEX_DELETED) {
-            return GitStatus::Deleted;
-        }
+    pub fn status(&self, path: &Path) -> GitStatus {
+        self.statuses.get(path).copied().unwrap_or_default()
+    }
+}
 
-        if status.contains(Status::WT_RENAMED) {
-            return GitStatus::Renamed;
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-        GitStatus::Unmodified
+    #[test]
+    fn index_states_take_precedence_over_the_worktree() {
+        assert_eq!(GitService::convert_status(Status::INDEX_NEW), GitStatus::Added);
+
+        assert_eq!(
+            GitService::convert_status(Status::INDEX_MODIFIED | Status::WT_MODIFIED),
+            GitStatus::Staged,
+        );
+
+        assert_eq!(GitService::convert_status(Status::WT_NEW), GitStatus::Untracked);
+        assert_eq!(GitService::convert_status(Status::WT_MODIFIED), GitStatus::Modified);
+        assert_eq!(GitService::convert_status(Status::CURRENT), GitStatus::Unmodified);
+    }
+
+    #[test]
+    fn a_path_outside_any_repository_has_no_status() {
+        let mut service = GitService::default();
+
+        service.refresh(Path::new("/"));
+
+        assert_eq!(service.status(Path::new("/etc/hosts")), GitStatus::Unmodified);
     }
 }
